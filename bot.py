@@ -7,7 +7,13 @@ import requests
 import os
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID"))
+OWNER_ID_ENV = os.getenv("OWNER_ID")
+
+if OWNER_ID_ENV is None:
+    raise RuntimeError("OWNER_ID environment variable is not set")
+
+OWNER_ID = int(OWNER_ID_ENV)
+
 AUDIT_WEBHOOK_URL = os.getenv("AUDIT_WEBHOOK_URL")
 
 
@@ -121,3 +127,4 @@ async def dm(ctx: commands.Context, member: discord.Member = None, *, message: s
 # ---------- RUN ----------
 
 bot.run(BOT_TOKEN)
+
