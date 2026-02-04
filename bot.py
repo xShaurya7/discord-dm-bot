@@ -33,7 +33,7 @@ else:
 # BOT SETUP
 # =======================
 
-COOLDOWN_SECONDS = 5 * 60
+COOLDOWN_SECONDS = 1 * 30
 cooldowns = {}
 
 intents = discord.Intents.default()
@@ -142,4 +142,5 @@ async def dm(ctx: commands.Context, member: discord.Member = None, *, message: s
 # =======================
 
 bot.run(BOT_TOKEN)
+
 
