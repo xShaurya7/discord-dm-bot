@@ -122,12 +122,12 @@ async def dm(ctx: commands.Context, member: discord.Member = None, *, message: s
         await member.send(message)
 
         send_audit_log(
-            ctx.guild.name,
-            ctx.channel.name,
-            author.display_name,
-            member.display_name,
-            message
-        )
+    ctx.guild.name,
+    ctx.channel.name,
+    f"{author.name} (nick: {author.display_name})",
+    f"{member.name} (nick: {member.display_name})",
+    message
+)
 
         await ctx.message.delete()
 
@@ -142,3 +142,4 @@ async def dm(ctx: commands.Context, member: discord.Member = None, *, message: s
 # =======================
 
 bot.run(BOT_TOKEN)
+
