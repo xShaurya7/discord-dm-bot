@@ -1,25 +1,40 @@
-import discord
-from discord.ext import commands
+import os
 import time
 import requests
+import discord
+from discord.ext import commands
 
-# ================== CONFIG ==================
-import os
+# =======================
+# SAFE ENV LOADING
+# =======================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID_ENV = os.getenv("OWNER_ID")
-
-if OWNER_ID_ENV is None:
-    raise RuntimeError("OWNER_ID environment variable is not set")
-
-OWNER_ID = int(OWNER_ID_ENV)
-
 AUDIT_WEBHOOK_URL = os.getenv("AUDIT_WEBHOOK_URL")
 
+print("=== ENV CHECK ===")
+print("BOT_TOKEN set:", BOT_TOKEN is not None)
+print("OWNER_ID set:", OWNER_ID_ENV)
+print("WEBHOOK set:", AUDIT_WEBHOOK_URL is not None)
+print("=================")
 
-COOLDOWN_SECONDS = 5 * 60  # 5 minutes
+# HARD FAIL only if BOT_TOKEN missing (others we can guard)
+if BOT_TOKEN is None:
+    raise RuntimeError("BOT_TOKEN environment variable is not set")
 
-# ============================================
+# OWNER_ID handling (THIS WAS YOUR ISSUE)
+if OWNER_ID_ENV is None or not OWNER_ID_ENV.isdigit():
+    print("⚠️ OWNER_ID missing or invalid — bot will START but owner-only checks disabled")
+    OWNER_ID = None
+else:
+    OWNER_ID = int(OWNER_ID_ENV)
+
+# =======================
+# BOT SETUP
+# =======================
+
+COOLDOWN_SECONDS = 5 * 60
+cooldowns = {}
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -27,104 +42,103 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-cooldowns = {}  # user_id -> last_used_timestamp
-
-
-# ---------- HELPER FUNCTIONS ----------
+# =======================
+# HELPERS
+# =======================
 
 def is_on_cooldown(user_id: int) -> bool:
-    if user_id not in cooldowns:
-        return False
-    return time.time() - cooldowns[user_id] < COOLDOWN_SECONDS
+    return user_id in cooldowns and time.time() - cooldowns[user_id] < COOLDOWN_SECONDS
 
 
 def remaining_cooldown(user_id: int) -> int:
     return int(COOLDOWN_SECONDS - (time.time() - cooldowns[user_id]))
 
 
-def send_audit_log(
-    server_name: str,
-    channel_name: str,
-    sender_name: str,
-    target_name: str,
-    message: str
-):
-    embed = {
-        "title": "📩 DM Relay Used",
-        "color": 3447003,
-        "fields": [
-            {"name": "Server", "value": server_name, "inline": True},
-            {"name": "Channel", "value": channel_name, "inline": True},
-            {"name": "Sender", "value": sender_name, "inline": False},
-            {"name": "Target User", "value": target_name, "inline": False},
-            {"name": "Message", "value": message, "inline": False},
-        ]
+def send_audit_log(server, channel, sender, target, message):
+    if not AUDIT_WEBHOOK_URL:
+        print("⚠️ Webhook not set, skipping audit log")
+        return
+
+    payload = {
+        "embeds": [{
+            "title": "📩 DM Relay Used",
+            "color": 3447003,
+            "fields": [
+                {"name": "Server", "value": server, "inline": True},
+                {"name": "Channel", "value": channel, "inline": True},
+                {"name": "Sender", "value": sender, "inline": False},
+                {"name": "Target User", "value": target, "inline": False},
+                {"name": "Message", "value": message, "inline": False},
+            ]
+        }]
     }
 
-    payload = {"embeds": [embed]}
-    requests.post(AUDIT_WEBHOOK_URL, json=payload)
+    try:
+        requests.post(AUDIT_WEBHOOK_URL, json=payload, timeout=5)
+    except Exception as e:
+        print("Audit log failed:", e)
 
-
-# ---------- EVENTS ----------
+# =======================
+# EVENTS
+# =======================
 
 @bot.event
 async def on_ready():
-    print(f"Bot online as {bot.user}")
+    print(f"✅ Bot online as {bot.user}")
 
-
-# ---------- COMMANDS ----------
+# =======================
+# COMMANDS
+# =======================
 
 @bot.command(name="dm")
 async def dm(ctx: commands.Context, member: discord.Member = None, *, message: str = None):
 
     author = ctx.author
 
-    # 🔒 Permission check
-    if author.id != OWNER_ID and not author.guild_permissions.administrator:
+    # PERMISSION CHECK
+    if OWNER_ID is not None:
+        allowed = author.id == OWNER_ID or author.guild_permissions.administrator
+    else:
+        allowed = author.guild_permissions.administrator
+
+    if not allowed:
         await ctx.send("❌ You are not allowed to use this command.")
         return
 
-    # ⏳ Cooldown check (non-owner)
-    if author.id != OWNER_ID:
+    # COOLDOWN (non-owner)
+    if OWNER_ID is None or author.id != OWNER_ID:
         if is_on_cooldown(author.id):
-            await ctx.send(
-                f"⏳ Please wait **{remaining_cooldown(author.id)} seconds** before using this command again."
-            )
+            await ctx.send(f"⏳ Wait {remaining_cooldown(author.id)} seconds.")
             return
+        cooldowns[author.id] = time.time()
 
-    # 🧾 Format check
+    # FORMAT CHECK
     if member is None or message is None:
         await ctx.send("❌ Usage: `!dm @user message`")
         return
 
-    # ⏱ Apply cooldown
-    if author.id != OWNER_ID:
-        cooldowns[author.id] = time.time()
-
-    # 📩 Send DM
+    # SEND DM
     try:
         await member.send(message)
 
-        # 📋 Audit log (embed via webhook)
         send_audit_log(
-            server_name=ctx.guild.name,
-            channel_name=ctx.channel.name,
-            sender_name=author.display_name,
-            target_name=member.display_name,
-            message=message
+            ctx.guild.name,
+            ctx.channel.name,
+            author.display_name,
+            member.display_name,
+            message
         )
 
-        # 🧹 Delete command message
         await ctx.message.delete()
 
     except discord.Forbidden:
         await ctx.send("❌ User has DMs disabled.")
     except Exception as e:
+        print("DM failed:", e)
         await ctx.send("❌ Failed to send DM.")
-        print(e)
 
-
-# ---------- RUN ----------
+# =======================
+# RUN
+# =======================
 
 bot.run(BOT_TOKEN)
-
