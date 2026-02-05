@@ -17,3 +17,18 @@ Built using **Python** and **discord.py**, and designed for **cloud deployment**
 - 📬 Send anonymous DMs via bot
 
 !dm @user {message}
+
+- 🧹 Automatically deletes the command message
+- 🔐 Owner / Admin-only access
+- ⏳ Cooldown for non-owner users
+- 📋 Audit logging via Discord **webhook embeds**
+- 👤 Logs **Discord username + server nickname**
+- ☁️ Cloud-ready (Railway / Render / Fly.io)
+- 🔒 Secure token handling using environment variables
+
+---
+
+## 🧠 How It Works
+
+Instead of users directly DMing each other, the bot acts as a **relay**:
+
