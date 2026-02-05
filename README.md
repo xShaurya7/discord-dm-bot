@@ -1,0 +1,5 @@
+![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python)
+![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
+![discord.py](https://img.shields.io/badge/discord.py-2.x-blue)
+![Cloud](https://img.shields.io/badge/Cloud-Hosted-success?logo=cloud)
+![License](https://img.shields.io/badge/License-MIT-green)
