@@ -18,11 +18,9 @@ print("OWNER_ID set:", OWNER_ID_ENV)
 print("WEBHOOK set:", AUDIT_WEBHOOK_URL is not None)
 print("=================")
 
-# HARD FAIL only if BOT_TOKEN missing (others we can guard)
 if BOT_TOKEN is None:
     raise RuntimeError("BOT_TOKEN environment variable is not set")
 
-# OWNER_ID handling (THIS WAS YOUR ISSUE)
 if OWNER_ID_ENV is None or not OWNER_ID_ENV.isdigit():
     print("⚠️ OWNER_ID missing or invalid — bot will START but owner-only checks disabled")
     OWNER_ID = None
@@ -142,5 +140,6 @@ async def dm(ctx: commands.Context, member: discord.Member = None, *, message: s
 # =======================
 
 bot.run(BOT_TOKEN)
+
 
 
