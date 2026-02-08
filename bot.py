@@ -91,7 +91,8 @@ def send_audit_log(server, channel, sender, target, message):
 
 @bot.event
 async def on_ready():
-    print(f"✅ Bot online as {bot.user}")
+    print("✅ BOT VERSION: USEBAN v1.0 LOADED")
+    print(f"Logged in as {bot.user}")
 
 # =======================
 # COMMANDS
@@ -118,3 +119,4 @@ async def dm(ctx: commands.Context, member: discord.Member = None, *, message: s
 
     # Cooldown (non-owner)
     if OWNER_ID is None or author.id != OWNER_ID:
+
