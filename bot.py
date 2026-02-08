@@ -33,6 +33,7 @@ else:
 
 COOLDOWN_SECONDS = 1 * 30
 cooldowns = {}
+banned_users = set()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -135,11 +136,73 @@ async def dm(ctx: commands.Context, member: discord.Member = None, *, message: s
         print("DM failed:", e)
         await ctx.send("❌ Failed to send DM.")
 
+@bot.command(name="useban")
+async def useban(ctx: commands.Context, member: discord.Member = None):
+
+    author = ctx.author
+
+    # Permission check (Owner OR Admin)
+    allowed = (
+        (OWNER_ID is not None and author.id == OWNER_ID)
+        or author.guild_permissions.administrator
+    )
+
+    if not allowed:
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+
+    if member is None:
+        await ctx.send("❌ Usage: `!useban @user`")
+        return
+
+    if member.id in banned_users:
+        await ctx.send("⚠️ User is already banned from using the bot.")
+        return
+
+    banned_users.add(member.id)
+
+    await ctx.send(f"🚫 **{member.name}** has been banned from using the bot.")
+
+@bot.command(name="useunban")
+async def useunban(ctx: commands.Context, member: discord.Member = None):
+
+    author = ctx.author
+
+    # Permission check (Owner OR Admin)
+    allowed = (
+        (OWNER_ID is not None and author.id == OWNER_ID)
+        or author.guild_permissions.administrator
+    )
+
+    if not allowed:
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+
+    if member is None:
+        await ctx.send("❌ Usage: `!useunban @user`")
+        return
+
+    if member.id not in banned_users:
+        await ctx.send("⚠️ User is not banned.")
+        return
+
+    banned_users.remove(member.id)
+
+    await ctx.send(f"✅ **{member.name}** has been unbanned from using the bot.")
+
+@bot.check
+async def block_banned_users(ctx):
+    if ctx.author.id in banned_users:
+        await ctx.send("🚫 You are banned from using this bot.")
+        return False
+    return True
+
 # =======================
 # RUN
 # =======================
 
 bot.run(BOT_TOKEN)
+
 
 
 
