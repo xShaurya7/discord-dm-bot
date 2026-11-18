@@ -608,6 +608,16 @@ async def role_list_slash(interaction: discord.Interaction) -> None:
 
 
 HELP_CATEGORIES = {
+    "All": (
+        "`/dm <user> <message>` • `!dm @user message`\n"
+        "`/ban <user> [reason]` • `!ban @user [reason]`\n"
+        "`/unban <user>` • `!unban @user`\n"
+        "`/banlist` • `!banlist`\n"
+        "`/allowroledm <role>` • `!allowroledm @role`\n"
+        "`/removeroledm <role>` • `!removeroledm @role`\n"
+        "`/rolelist` • `!rolelist`\n"
+        "`/help` • `!help`"
+    ),
     "DM": (
         "`/dm <user> <message>` • `!dm @user message`\n"
         "Send an anonymous DM."
@@ -635,7 +645,7 @@ HELP_CATEGORIES = {
 }
 
 
-def build_help_embed(category: str = "DM") -> discord.Embed:
+def build_help_embed(category: str = "All") -> discord.Embed:
     return discord.Embed(
         title=f"📖 Nino • {category}",
         description=HELP_CATEGORIES[category],
@@ -657,7 +667,15 @@ class HelpView(discord.ui.View):
             view=HelpView(),
         )
 
-    @discord.ui.button(label="DM", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="All", style=discord.ButtonStyle.primary, row=0)
+    async def all_category(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.show_category(interaction, "All")
+
+    @discord.ui.button(label="DM", style=discord.ButtonStyle.secondary, row=0)
     async def dm_category(
         self,
         interaction: discord.Interaction,
@@ -665,7 +683,7 @@ class HelpView(discord.ui.View):
     ) -> None:
         await self.show_category(interaction, "DM")
 
-    @discord.ui.button(label="Moderation", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Moderation", style=discord.ButtonStyle.secondary, row=0)
     async def moderation_category(
         self,
         interaction: discord.Interaction,
@@ -673,7 +691,7 @@ class HelpView(discord.ui.View):
     ) -> None:
         await self.show_category(interaction, "Moderation")
 
-    @discord.ui.button(label="Roles", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Roles", style=discord.ButtonStyle.secondary, row=0)
     async def roles_category(
         self,
         interaction: discord.Interaction,
@@ -681,7 +699,7 @@ class HelpView(discord.ui.View):
     ) -> None:
         await self.show_category(interaction, "Roles")
 
-    @discord.ui.button(label="Utility", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Utility", style=discord.ButtonStyle.secondary, row=0)
     async def utility_category(
         self,
         interaction: discord.Interaction,
@@ -689,7 +707,7 @@ class HelpView(discord.ui.View):
     ) -> None:
         await self.show_category(interaction, "Utility")
 
-    @discord.ui.button(label="×", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="×", style=discord.ButtonStyle.danger, row=1)
     async def close(
         self,
         interaction: discord.Interaction,
