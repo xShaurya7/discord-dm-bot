@@ -997,11 +997,24 @@ async def settings_slash(interaction: discord.Interaction) -> None:
     )
 
 
-def build_server_list_embed() -> discord.Embed:
+async def build_server_list_embed() -> discord.Embed:
     guilds = sorted(bot.guilds, key=lambda guild: guild.name.casefold())
+    for guild in guilds:
+        if not guild.chunked:
+            await guild.chunk(cache=True)
+    unique_member_ids = {
+        member.id
+        for guild in guilds
+        for member in guild.members
+        if not member.bot
+    }
+    total_unique_members = len(unique_member_ids)
     embed = discord.Embed(
         title="🌐 Nino Server List",
-        description=f"Nino is currently in **{len(guilds)}** server(s).",
+        description=(
+            f"Nino is currently in **{len(guilds)}** server(s).\n"
+            f"**Total unique members:** `{total_unique_members}`"
+        ),
         color=discord.Color.blurple(),
     )
 
@@ -1037,7 +1050,7 @@ async def server_list(ctx: commands.Context) -> None:
     if not is_owner(ctx.author):
         await ctx.send("❌ Only the bot owner can use this command.")
         return
-    await ctx.send(embed=build_server_list_embed())
+    await ctx.send(embed=await build_server_list_embed())
 
 
 @bot.tree.command(name="serverlist", description="Show all servers Nino is in.")
@@ -1048,8 +1061,9 @@ async def server_list_slash(interaction: discord.Interaction) -> None:
             ephemeral=True,
         )
         return
-    await interaction.response.send_message(
-        embed=build_server_list_embed(),
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(
+        embed=await build_server_list_embed(),
         ephemeral=True,
     )
 
