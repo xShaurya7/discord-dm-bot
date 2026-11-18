@@ -42,8 +42,7 @@ Instead of users directly DMing each other, the bot acts as a **relay**.
 - `BOT_TOKEN` (required): Discord bot token.
 - `OWNER_ID` (optional): Discord user ID that bypasses admin checks and cooldowns.
 - `AUDIT_WEBHOOK_URL` (optional): Webhook URL for DM audit logs.
-- `GUILD_ID` (optional): Server ID for immediate slash-command registration. If omitted,
-  commands are synced globally and may take longer to appear.
+- `GUILD_ID` (optional): Main server ID used for mirrored audit logs.
 - `DATABASE_PATH` (optional): SQLite database location for allowed roles.
 
 For local or panel hosting, variables may be stored in a private `.env` file:

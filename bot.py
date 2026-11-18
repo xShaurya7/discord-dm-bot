@@ -486,14 +486,8 @@ async def on_ready() -> None:
         ),
     )
     if not synced_commands:
-        if GUILD_ID is not None:
-            guild = discord.Object(id=GUILD_ID)
-            bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-            print(f"✅ Slash commands synced to guild {GUILD_ID}")
-        else:
-            await bot.tree.sync()
-            print("✅ Slash commands synced globally")
+        await bot.tree.sync()
+        print("✅ Slash commands synced globally")
         synced_commands = True
     print(f"✅ Bot online as {bot.user}")
 
