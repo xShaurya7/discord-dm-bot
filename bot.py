@@ -1145,6 +1145,247 @@ async def dm_history_slash(
     )
 
 
+def parse_embed_color(value: str | None) -> discord.Color:
+    if value:
+        cleaned = value.strip().lstrip("#")
+        if len(cleaned) == 6:
+            try:
+                return discord.Color(int(cleaned, 16))
+            except ValueError:
+                pass
+    return discord.Color.blurple()
+
+
+def build_features_embed(guild: discord.Guild) -> discord.Embed:
+    embed = discord.Embed(
+        title="Nino Bot Features",
+        description="Everything you can do with Nino.",
+        color=discord.Color.blurple(),
+    )
+    embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
+    embed.add_field(
+        name="📩 `/dm` — Send an anonymous DM",
+        value="**Example:** `/dm @Member Hello!`",
+        inline=False,
+    )
+    embed.add_field(
+        name="💬 `/reply` — Continue an active DM conversation",
+        value="**Example:** `/reply @Member Thanks for reaching out!`",
+        inline=False,
+    )
+    embed.add_field(
+        name="📊 `/dmhistory` — View delivery reports",
+        value="**Example:** `/dmhistory limit:10`",
+        inline=False,
+    )
+    embed.add_field(
+        name="🛡️ `/ban` and `/unban` — Manage bot bans",
+        value="**Example:** `/ban @Member Spamming`",
+        inline=False,
+    )
+    embed.add_field(
+        name="🎭 `/allowroledm` — Control DM permissions",
+        value="**Example:** `/allowroledm @Staff`",
+        inline=False,
+    )
+    embed.add_field(
+        name="📢 `/send` — Send a message to a channel",
+        value="**Example:** `/send #announcements Welcome!`",
+        inline=False,
+    )
+    embed.add_field(
+        name="🪝 `/enableaudit` — Enable private webhook audit logs",
+        value="**Example:** `/enableaudit`",
+        inline=False,
+    )
+    embed.add_field(
+        name="👤 `/info` and `/serverlist` — View useful server details",
+        value="**Example:** `/info @Member`",
+        inline=False,
+    )
+    embed.set_image(url=guild.icon.url if guild.icon else None)
+    embed.set_footer(
+        text=f"{guild.name} • Powered by Nino",
+        icon_url=guild.icon.url if guild.icon else None,
+    )
+    return embed
+
+
+async def send_configured_embed(
+    author: discord.abc.User,
+    guild: discord.Guild,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    footer: str | None = None,
+    image_url: str | None = None,
+    thumbnail_url: str | None = None,
+    color_value: str | None = None,
+    preset: str | None = None,
+) -> tuple[bool, str]:
+    if not is_admin_or_owner(author):
+        return False, "❌ You are not allowed to use this command."
+    if channel.guild.id != guild.id:
+        return False, "❌ The target channel must be in this server."
+    if not channel.permissions_for(guild.me).send_messages:
+        return False, f"❌ I do not have permission to send messages in {channel.mention}."
+
+    try:
+        if preset == "features":
+            embed = build_features_embed(guild)
+            if title and title.lower() != "features":
+                embed.title = title
+            if description:
+                embed.description = description
+            if footer:
+                embed.set_footer(
+                    text=footer,
+                    icon_url=guild.icon.url if guild.icon else None,
+                )
+            if image_url:
+                embed.set_image(url=image_url)
+            if thumbnail_url:
+                embed.set_thumbnail(url=thumbnail_url)
+            embed.color = parse_embed_color(color_value)
+        else:
+            embed = discord.Embed(
+                title=title[:256] if title else "Nino Announcement",
+                description=description[:4096],
+                color=parse_embed_color(color_value),
+            )
+            embed.set_thumbnail(
+                url=thumbnail_url or (guild.icon.url if guild.icon else None)
+            )
+            embed.set_image(
+                url=image_url or (guild.icon.url if guild.icon else None)
+            )
+            embed.set_footer(
+                text=footer[:2048] if footer else f"{guild.name} • Posted by Nino",
+                icon_url=guild.icon.url if guild.icon else None,
+            )
+            embed.timestamp = datetime.now(timezone.utc)
+
+        sent_message = await channel.send(embed=embed)
+        await send_discord_audit(
+            guild,
+            "🎨 Embed Posted",
+            [
+                {"name": "Channel", "value": channel.mention, "inline": True},
+                {"name": "Moderator", "value": f"{author} ({author.id})", "inline": False},
+                {"name": "Heading", "value": embed.title or "N/A", "inline": False},
+                {"name": "Message", "value": description[:1024] if description else "(Feature embed)", "inline": False},
+                {"name": "Message ID", "value": f"`{sent_message.id}`", "inline": True},
+            ],
+        )
+        return True, f"✅ Embed sent in {channel.mention}."
+    except (discord.Forbidden, discord.HTTPException) as error:
+        return False, f"❌ Could not send the embed: {error}"
+
+
+@bot.command(name="embed")
+async def embed_message(
+    ctx: commands.Context,
+    channel: discord.TextChannel | None = None,
+    *,
+    configuration: str | None = None,
+) -> None:
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    if channel is None:
+        await ctx.send(
+            "❌ Usage: `!embed #channel | Title | Description | Footer | Image URL | Thumbnail URL | Hex Color`"
+        )
+        return
+
+    parts = [part.strip() for part in (configuration or "").split("|")]
+    title = parts[0] if parts and parts[0] else "Nino Announcement"
+    description = parts[1] if len(parts) > 1 and parts[1] else ""
+    footer = parts[2] if len(parts) > 2 and parts[2] else None
+    image_url = parts[3] if len(parts) > 3 and parts[3] else None
+    thumbnail_url = parts[4] if len(parts) > 4 and parts[4] else None
+    color_value = parts[5] if len(parts) > 5 and parts[5] else None
+
+    if title.lower() == "features":
+        sent, response = await send_configured_embed(
+            ctx.author,
+            ctx.guild,
+            channel,
+            title,
+            description,
+            footer,
+            image_url,
+            thumbnail_url,
+            color_value,
+            preset="features",
+        )
+    elif not description:
+        await ctx.send(
+            "❌ Provide a description: `!embed #channel | Title | Description | Footer | Image URL | Thumbnail URL | Hex Color`"
+        )
+        return
+    else:
+        sent, response = await send_configured_embed(
+            ctx.author,
+            ctx.guild,
+            channel,
+            title,
+            description,
+            footer,
+            image_url,
+            thumbnail_url,
+            color_value,
+        )
+    await ctx.send(response, delete_after=15)
+
+
+@bot.tree.command(name="embed", description="Create and send a configurable embed to a channel.")
+@app_commands.describe(
+    channel="Channel that should receive the embed",
+    title="Embed heading",
+    description="Main embed text",
+    footer="Optional footer text",
+    image="Optional image URL",
+    thumbnail="Optional thumbnail URL",
+    color="Optional hex color, such as 5865F2",
+    preset="Use the polished bot-features embed template",
+)
+@app_commands.choices(preset=[
+    app_commands.Choice(name="Custom", value="custom"),
+    app_commands.Choice(name="Nino bot features", value="features"),
+])
+async def embed_message_slash(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    footer: str | None = None,
+    image: str | None = None,
+    thumbnail: str | None = None,
+    color: str | None = None,
+    preset: app_commands.Choice[str] | None = None,
+) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    sent, response = await send_configured_embed(
+        interaction.user,
+        interaction.guild,
+        channel,
+        title,
+        description,
+        footer,
+        image,
+        thumbnail,
+        color,
+        preset=preset.value if preset else "custom",
+    )
+    await interaction.response.send_message(response, ephemeral=True)
+
+
 async def send_channel_message(
     author: discord.abc.User,
     guild: discord.Guild,
@@ -2089,6 +2330,8 @@ HELP_CATEGORIES = {
         "Show this menu.\n\n"
         "`/send <channel> <message>` • `!send #channel message`\n"
         "Send a message to a specified channel. Admin-only.\n\n"
+        "`/embed <channel> <title> <description>` • `!embed #channel | Title | Description`\n"
+        "Send a polished configurable embed. Admin-only.\n\n"
         "`/info [member]` • `!info [@member]`\n"
         "Show member profile details.\n\n"
         "`/prefixlist` • `!prefixlist`\n"
@@ -2134,6 +2377,11 @@ def build_help_embed(category: str = "All") -> discord.Embed:
         embed.add_field(
             name="`/send` or `!send`",
             value="Send a message to a specified channel. Aliases: `!say`. Admin-only.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/embed` or `!embed`",
+            value="Send a polished configurable embed with title, description, footer, image, thumbnail, and color. Admin-only.",
             inline=False,
         )
         embed.add_field(

@@ -40,6 +40,7 @@ or use the `/dm` slash command.
 - 💬 Two-way DM conversation replies through bot DMs
 - 📊 `/dmhistory` and `!dmhistory` show delivered, blocked, failed, and reply reports
 - 📢 `/send` and `!send` let admins send a message to a specified channel
+- 🎨 `/embed` creates polished configurable embeds with titles, images, footers, thumbnails, colors, and a bot-features preset
 
 ---
 
@@ -82,8 +83,37 @@ The limit accepts 1–25 reports. Reports show **Delivered**, **Blocked**, **Fai
 | `/reply @user message` or `!reply @user message` | Reply to an active DM conversation |
 | `/dmhistory [limit]` or `!dmhistory [limit]` | View recent delivery reports (admin-only) |
 | `/send #channel message` or `!send #channel message` | Send a message to a specified channel (admin-only; `!say` is also supported) |
+| `/embed #channel title:... description:...` or `!embed #channel \| Title \| Description \| Footer \| Image URL \| Thumbnail URL \| Hex Color` | Send a configurable embed (admin-only) |
 | `/enableaudit` or `!enableaudit` | Create and enable audit logging |
 | `/disableaudit` or `!disableaudit` | Disable audit logging |
+
+## 🎨 Embed Command
+
+Use `/embed` for guided slash-command fields, or use `!embed` with pipe-separated
+values:
+
+```text
+!embed #announcements | Nino Bot Features | Everything you can do with Nino | Silly Development | | | 5865F2
+```
+
+For the polished feature-list embed:
+
+```text
+!embed #announcements | features
+```
+
+Custom embed fields:
+
+1. Channel
+2. Title
+3. Description
+4. Footer
+5. Image URL
+6. Thumbnail URL
+7. Hex color
+
+Omit optional fields with empty pipe values. If no image or thumbnail is supplied,
+the bot uses the server icon automatically.
 
 ## ⚙️ Environment variables
 
