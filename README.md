@@ -36,6 +36,7 @@ or use the `/dm` slash command.
 - ⌨️ `/prefixlist` and `!prefixlist` show every command prefix
 - 🔑 Allow selected roles to use `/dm` or `!dm`
 - ⚙️ Per-server settings for cooldown, maintenance mode, and audit logging
+- 🪝 Audit logs delivered through private-server webhooks
 
 ---
 

@@ -64,6 +64,10 @@ if "audit_enabled" not in columns:
     database.execute(
         "ALTER TABLE guild_settings ADD COLUMN audit_enabled INTEGER NOT NULL DEFAULT 0"
     )
+if "audit_webhook_url" not in columns:
+    database.execute(
+        "ALTER TABLE guild_settings ADD COLUMN audit_webhook_url TEXT"
+    )
 database.commit()
 
 intents = discord.Intents.default()
@@ -228,6 +232,32 @@ def set_audit_channel(guild_id: int, channel_id: int, enabled: bool = True) -> N
         )
 
 
+def disable_guild_audit(guild_id: int, channel_id: int) -> None:
+    set_audit_channel(guild_id, channel_id, False)
+    with database:
+        database.execute(
+            "UPDATE guild_settings SET audit_webhook_url = NULL WHERE guild_id = ?",
+            (guild_id,),
+        )
+
+
+def get_audit_webhook_url(guild_id: int) -> str | None:
+    cursor = database.execute(
+        "SELECT audit_webhook_url FROM guild_settings WHERE guild_id = ?",
+        (guild_id,),
+    )
+    row = cursor.fetchone()
+    return str(row[0]) if row is not None and row[0] else None
+
+
+def set_audit_webhook_url(guild_id: int, webhook_url: str) -> None:
+    with database:
+        database.execute(
+            "UPDATE guild_settings SET audit_webhook_url = ? WHERE guild_id = ?",
+            (webhook_url, guild_id),
+        )
+
+
 def parse_seconds(value: str) -> int | None:
     value = value.strip().lower()
     if value.isdigit():
@@ -345,6 +375,7 @@ async def find_or_create_audit_channel(
             send_messages=True,
             read_message_history=True,
             manage_channels=True,
+            manage_webhooks=True,
         )
 
     if OWNER_ID is not None:
@@ -404,7 +435,6 @@ async def send_discord_audit(
 ) -> None:
     embed = build_discord_audit_embed(title, fields)
     audit_enabled, audit_channel_id = get_audit_settings(source_guild.id)
-    sent_channel_ids: set[int] = set()
 
     if audit_enabled:
         channel = (
@@ -419,28 +449,101 @@ async def send_discord_audit(
             )
             if channel is not None:
                 set_audit_channel(source_guild.id, channel.id, True)
+
         if isinstance(channel, discord.TextChannel):
-            try:
-                await channel.send(embed=embed)
-                sent_channel_ids.add(channel.id)
-            except discord.HTTPException as error:
-                print(f"Could not send guild audit log: {error}")
+            webhook_url = get_audit_webhook_url(source_guild.id)
+            if webhook_url is None:
+                webhook_url = await ensure_audit_webhook(source_guild, channel)
+                if webhook_url:
+                    set_audit_webhook_url(source_guild.id, webhook_url)
+
+            if webhook_url:
+                try:
+                    webhook = discord.Webhook.from_url(webhook_url, client=bot)
+                    await webhook.send(
+                        embed=embed,
+                        username="Nino Audit",
+                        wait=True,
+                    )
+                except (discord.HTTPException, discord.NotFound) as error:
+                    print(f"Could not send guild audit webhook: {error}")
+            else:
+                print("Could not create guild audit webhook")
 
     if GUILD_ID is not None:
         main_guild = bot.get_guild(GUILD_ID)
-        if main_guild is not None:
+        if main_guild is not None and main_guild.id != source_guild.id:
             main_channel = await find_or_create_audit_channel(
                 main_guild,
                 "nino-main-audit-log",
             )
-            if (
-                isinstance(main_channel, discord.TextChannel)
-                and main_channel.id not in sent_channel_ids
-            ):
-                try:
-                    await main_channel.send(embed=embed)
-                except discord.HTTPException as error:
-                    print(f"Could not send main-server audit log: {error}")
+            if isinstance(main_channel, discord.TextChannel):
+                main_webhook_url = await ensure_audit_webhook(
+                    main_guild,
+                    main_channel,
+                    "Nino Main Audit",
+                )
+                if main_webhook_url:
+                    try:
+                        webhook = discord.Webhook.from_url(
+                            main_webhook_url,
+                            client=bot,
+                        )
+                        await webhook.send(
+                            embed=embed,
+                            username="Nino Main Audit",
+                            wait=True,
+                        )
+                    except (discord.HTTPException, discord.NotFound) as error:
+                        print(f"Could not send main-server audit webhook: {error}")
+
+    if AUDIT_WEBHOOK_URL:
+        await asyncio.to_thread(
+            send_audit_webhook,
+            AUDIT_WEBHOOK_URL,
+            embed,
+        )
+
+
+async def ensure_audit_webhook(
+    guild: discord.Guild,
+    channel: discord.TextChannel,
+    webhook_name: str = "Nino Audit",
+) -> str | None:
+    try:
+        webhooks = await channel.webhooks()
+    except discord.HTTPException as error:
+        print(f"Could not read audit webhooks in {guild.name}: {error}")
+        return None
+
+    for webhook in webhooks:
+        if webhook.user is not None and bot.user is not None:
+            if webhook.user.id == bot.user.id and webhook.name == webhook_name:
+                return webhook.url
+
+    try:
+        webhook = await channel.create_webhook(
+            name=webhook_name,
+            reason="Created for Nino audit logging",
+        )
+        return webhook.url
+    except discord.HTTPException as error:
+        print(f"Could not create audit webhook in {guild.name}: {error}")
+        return None
+
+
+def send_audit_webhook(webhook_url: str, embed: discord.Embed) -> None:
+    if not webhook_url:
+        return
+    try:
+        response = requests.post(
+            webhook_url,
+            json={"embeds": [embed.to_dict()]},
+            timeout=5,
+        )
+        response.raise_for_status()
+    except requests.RequestException as error:
+        print(f"Audit webhook failed: {error}")
 
 
 async def relay_dm(
@@ -474,14 +577,6 @@ async def relay_dm(
     except discord.HTTPException:
         return False, "❌ Failed to send DM."
 
-    await asyncio.to_thread(
-        send_audit_log,
-        guild.name,
-        channel_name,
-        f"{author.name} (nick: {getattr(author, 'display_name', author.name)})",
-        f"{member.name} (nick: {member.display_name})",
-        message,
-    )
     await send_discord_audit(
         guild,
         "📩 DM Relay Used",
@@ -942,6 +1037,7 @@ def build_settings_embed(guild: discord.Guild) -> discord.Embed:
     cooldown_seconds, dm_enabled = get_guild_settings(guild.id)
     audit_enabled, audit_channel_id = get_audit_settings(guild.id)
     audit_channel = guild.get_channel(audit_channel_id) if audit_channel_id is not None else None
+    audit_webhook_url = get_audit_webhook_url(guild.id)
 
     embed = discord.Embed(
         title="⚙️ Nino Server Settings",
@@ -959,7 +1055,11 @@ def build_settings_embed(guild: discord.Guild) -> discord.Embed:
     )
     embed.add_field(
         name="Guild Audit Log",
-        value=audit_channel.mention if isinstance(audit_channel, discord.TextChannel) else ("Enabled" if audit_enabled else "Disabled"),
+        value=(
+            f"{audit_channel.mention} • Webhook"
+            if audit_enabled and isinstance(audit_channel, discord.TextChannel) and audit_webhook_url
+            else ("Enabled" if audit_enabled else "Disabled")
+        ),
         inline=False,
     )
     embed.set_footer(text=guild.name)
@@ -1205,6 +1305,11 @@ async def enable_audit(ctx: commands.Context) -> None:
         await ctx.send("❌ I could not create or find the audit log channel.")
         return
     set_audit_channel(ctx.guild.id, channel.id, True)
+    webhook_url = await ensure_audit_webhook(ctx.guild, channel)
+    if webhook_url is None:
+        await ctx.send("❌ The channel was created, but I could not create the audit webhook.")
+        return
+    set_audit_webhook_url(ctx.guild.id, webhook_url)
     await send_discord_audit(
         ctx.guild,
         "📝 Guild Audit Logging Enabled",
@@ -1240,6 +1345,14 @@ async def enable_audit_slash(interaction: discord.Interaction) -> None:
         await interaction.followup.send("❌ I could not create or find the audit log channel.", ephemeral=True)
         return
     set_audit_channel(interaction.guild.id, channel.id, True)
+    webhook_url = await ensure_audit_webhook(interaction.guild, channel)
+    if webhook_url is None:
+        await interaction.followup.send(
+            "❌ The channel was created, but I could not create the audit webhook.",
+            ephemeral=True,
+        )
+        return
+    set_audit_webhook_url(interaction.guild.id, webhook_url)
     await send_discord_audit(
         interaction.guild,
         "📝 Guild Audit Logging Enabled",
@@ -1264,7 +1377,7 @@ async def disable_audit(ctx: commands.Context) -> None:
         await ctx.send("❌ This command can only be used in a server.")
         return
     _, audit_channel_id = get_audit_settings(ctx.guild.id)
-    set_audit_channel(ctx.guild.id, audit_channel_id or 0, False)
+    disable_guild_audit(ctx.guild.id, audit_channel_id or 0)
     await send_discord_audit(
         ctx.guild,
         "📝 Guild Audit Logging Disabled",
@@ -1291,7 +1404,7 @@ async def disable_audit_slash(interaction: discord.Interaction) -> None:
         )
         return
     _, audit_channel_id = get_audit_settings(interaction.guild.id)
-    set_audit_channel(interaction.guild.id, audit_channel_id or 0, False)
+    disable_guild_audit(interaction.guild.id, audit_channel_id or 0)
     await send_discord_audit(
         interaction.guild,
         "📝 Guild Audit Logging Disabled",
@@ -1485,7 +1598,7 @@ HELP_CATEGORIES = {
         "`/togglemaintenance` • `!togglemaintenance`\n"
         "Enable or disable DM commands.\n\n"
         "`/enableaudit` • `!enableaudit`\n"
-        "Create and enable the guild audit log.\n\n"
+        "Create and enable the guild audit webhook.\n\n"
         "`/disableaudit` • `!disableaudit`\n"
         "Disable guild audit logging.\n\n"
         "`/serverlist` • `!serverlist`\n"
@@ -1568,7 +1681,7 @@ def build_help_embed(category: str = "All") -> discord.Embed:
         )
         embed.add_field(
             name="`/enableaudit` or `!enableaudit`",
-            value="Create and enable the guild audit channel. Admin-only.",
+            value="Create and enable the guild audit webhook. Admin-only.",
             inline=False,
         )
         embed.add_field(
