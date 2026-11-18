@@ -123,6 +123,9 @@ async def relay_dm(
     member: discord.Member,
     message: str,
 ) -> tuple[bool, str]:
+    if bot.user is not None and member.id == bot.user.id:
+        return False, "❌ You cannot send a DM to the bot itself."
+
     if not can_use_dm(author, guild.id):
         if author.id in banned_users:
             return False, "🚫 You are banned from using this bot."
