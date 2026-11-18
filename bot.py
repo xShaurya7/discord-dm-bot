@@ -73,6 +73,23 @@ def allow_dm_role(guild_id: int, role_id: int) -> bool:
     return cursor.rowcount > 0
 
 
+def remove_dm_role(guild_id: int, role_id: int) -> bool:
+    with database:
+        cursor = database.execute(
+            "DELETE FROM allowed_dm_roles WHERE guild_id = ? AND role_id = ?",
+            (guild_id, role_id),
+        )
+    return cursor.rowcount > 0
+
+
+def get_allowed_dm_roles(guild_id: int) -> list[int]:
+    cursor = database.execute(
+        "SELECT role_id FROM allowed_dm_roles WHERE guild_id = ? ORDER BY role_id",
+        (guild_id,),
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+
 def is_banned(guild_id: int, user_id: int) -> bool:
     cursor = database.execute(
         "SELECT 1 FROM banned_dm_users WHERE guild_id = ? AND user_id = ?",
@@ -457,9 +474,9 @@ async def allow_role_dm(ctx: commands.Context, role: discord.Role | None = None)
         return
 
     if allow_dm_role(ctx.guild.id, role.id):
-        await ctx.send(f"✅ **{role.name}** can now use the DM commands.")
+        await ctx.send(f"✅ **Role allowed to use DMs:** {role.mention}")
     else:
-        await ctx.send(f"⚠️ **{role.name}** is already allowed to use the DM commands.")
+        await ctx.send(f"ℹ️ **Role already allowed:** {role.mention}")
 
 
 @bot.tree.command(
@@ -485,10 +502,109 @@ async def allow_role_dm_slash(
         return
 
     if allow_dm_role(interaction.guild.id, role.id):
-        response = f"✅ **{role.name}** can now use the DM commands."
+        response = f"✅ **Role allowed to use DMs:** {role.mention}"
     else:
-        response = f"⚠️ **{role.name}** is already allowed to use the DM commands."
+        response = f"ℹ️ **Role already allowed:** {role.mention}"
     await interaction.response.send_message(response, ephemeral=True)
+
+
+@bot.command(name="removeroledm")
+async def remove_role_dm(ctx: commands.Context, role: discord.Role | None = None) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    if role is None:
+        await ctx.send("❌ Usage: `!removeroledm @role`")
+        return
+
+    if remove_dm_role(ctx.guild.id, role.id):
+        await ctx.send(f"✅ **Role removed from DM access:** {role.mention}")
+    else:
+        await ctx.send(f"ℹ️ **Role was not allowed:** {role.mention}")
+
+
+@bot.tree.command(
+    name="removeroledm",
+    description="Remove DM command access from a role.",
+)
+@app_commands.describe(role="The role that should lose access to /dm")
+async def remove_role_dm_slash(
+    interaction: discord.Interaction,
+    role: discord.Role,
+) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+
+    if remove_dm_role(interaction.guild.id, role.id):
+        response = f"✅ **Role removed from DM access:** {role.mention}"
+    else:
+        response = f"ℹ️ **Role was not allowed:** {role.mention}"
+    await interaction.response.send_message(response, ephemeral=True)
+
+
+def build_role_list_embed(guild: discord.Guild) -> discord.Embed:
+    role_ids = get_allowed_dm_roles(guild.id)
+    embed = discord.Embed(
+        title="🔑 Roles Allowed to Use DM Commands",
+        color=discord.Color.blurple(),
+    )
+
+    roles = [guild.get_role(role_id) for role_id in role_ids]
+    roles = [role for role in roles if role is not None]
+
+    if not roles:
+        embed.description = "No roles are currently allowed."
+    else:
+        embed.description = "\n".join(
+            f"• {role.mention} (`{role.id}`)" for role in roles
+        )
+
+    embed.set_footer(text=f"{guild.name} • {len(roles)} allowed role{'s' if len(roles) != 1 else ''}")
+    return embed
+
+
+@bot.command(name="rolelist")
+async def role_list(ctx: commands.Context) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    await ctx.send(embed=build_role_list_embed(ctx.guild))
+
+
+@bot.tree.command(name="rolelist", description="Show roles allowed to use DM commands.")
+async def role_list_slash(interaction: discord.Interaction) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message(
+        embed=build_role_list_embed(interaction.guild),
+        ephemeral=True,
+    )
 
 
 def build_help_embed() -> discord.Embed:
@@ -520,6 +636,16 @@ def build_help_embed() -> discord.Embed:
     embed.add_field(
         name="`/allowroledm` or `!allowroledm`",
         value="Allow a role to use the DM command. Admin-only.",
+        inline=False,
+    )
+    embed.add_field(
+        name="`/removeroledm` or `!removeroledm`",
+        value="Remove DM command access from a role. Admin-only.",
+        inline=False,
+    )
+    embed.add_field(
+        name="`/rolelist` or `!rolelist`",
+        value="Show all roles allowed to use DM commands. Admin-only.",
         inline=False,
     )
     embed.add_field(
