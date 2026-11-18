@@ -2,6 +2,7 @@ import asyncio
 import os
 import sqlite3
 import time
+from datetime import datetime, timezone
 
 import discord
 import requests
@@ -25,7 +26,6 @@ GUILD_ID = int(GUILD_ID_ENV) if GUILD_ID_ENV and GUILD_ID_ENV.isdigit() else Non
 
 COOLDOWN_SECONDS = 5 * 60
 cooldowns: dict[int, float] = {}
-banned_users: set[int] = set()
 DATABASE_PATH = os.getenv("DATABASE_PATH", "nino.db")
 
 database = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
@@ -34,6 +34,15 @@ database.execute("""
         guild_id INTEGER NOT NULL,
         role_id INTEGER NOT NULL,
         PRIMARY KEY (guild_id, role_id)
+    )
+""")
+database.execute("""
+    CREATE TABLE IF NOT EXISTS banned_dm_users (
+        guild_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        banned_at REAL NOT NULL,
+        PRIMARY KEY (guild_id, user_id)
     )
 """)
 database.commit()
@@ -64,10 +73,57 @@ def allow_dm_role(guild_id: int, role_id: int) -> bool:
     return cursor.rowcount > 0
 
 
+def is_banned(guild_id: int, user_id: int) -> bool:
+    cursor = database.execute(
+        "SELECT 1 FROM banned_dm_users WHERE guild_id = ? AND user_id = ?",
+        (guild_id, user_id),
+    )
+    return cursor.fetchone() is not None
+
+
+def ban_dm_user(
+    guild_id: int,
+    user_id: int,
+    reason: str,
+) -> bool:
+    with database:
+        cursor = database.execute(
+            """
+            INSERT OR IGNORE INTO banned_dm_users
+                (guild_id, user_id, reason, banned_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (guild_id, user_id, reason.strip() or "No reason provided", time.time()),
+        )
+    return cursor.rowcount > 0
+
+
+def unban_dm_user(guild_id: int, user_id: int) -> bool:
+    with database:
+        cursor = database.execute(
+            "DELETE FROM banned_dm_users WHERE guild_id = ? AND user_id = ?",
+            (guild_id, user_id),
+        )
+    return cursor.rowcount > 0
+
+
+def get_banned_dm_users(guild_id: int) -> list[tuple[int, str, float]]:
+    cursor = database.execute(
+        """
+        SELECT user_id, reason, banned_at
+        FROM banned_dm_users
+        WHERE guild_id = ?
+        ORDER BY banned_at DESC
+        """,
+        (guild_id,),
+    )
+    return cursor.fetchall()
+
+
 def can_use_dm(user: discord.abc.User, guild_id: int) -> bool:
     if is_owner(user) or is_admin_or_owner(user):
         return True
-    if user.id in banned_users:
+    if is_banned(guild_id, user.id):
         return False
 
     member_roles = getattr(user, "roles", ())
@@ -127,7 +183,7 @@ async def relay_dm(
         return False, "❌ You cannot send a DM to the bot itself."
 
     if not can_use_dm(author, guild.id):
-        if author.id in banned_users:
+        if is_banned(guild.id, author.id):
             return False, "🚫 You are banned from using this bot."
         return False, "❌ You are not allowed to use this command."
 
@@ -154,21 +210,30 @@ async def relay_dm(
     return True, "✅ DM sent successfully."
 
 
-async def ban_user(author: discord.abc.User, member: discord.Member) -> str:
+async def ban_user(
+    author: discord.abc.User,
+    guild: discord.Guild,
+    member: discord.Member,
+    reason: str,
+) -> str:
     if not is_admin_or_owner(author):
         return "❌ You are not allowed to use this command."
-    if member.id in banned_users:
+    if is_banned(guild.id, member.id):
         return "⚠️ User is already banned from using the bot."
-    banned_users.add(member.id)
-    return f"🚫 **{member.name}** has been banned from using the bot."
+    ban_dm_user(guild.id, member.id, reason)
+    return f"🚫 **{member.name}** has been banned from using the bot.\nReason: {reason.strip() or 'No reason provided'}"
 
 
-async def unban_user(author: discord.abc.User, member: discord.Member) -> str:
+async def unban_user(
+    author: discord.abc.User,
+    guild: discord.Guild,
+    member: discord.Member,
+) -> str:
     if not is_admin_or_owner(author):
         return "❌ You are not allowed to use this command."
-    if member.id not in banned_users:
+    if not is_banned(guild.id, member.id):
         return "⚠️ User is not banned."
-    banned_users.remove(member.id)
+    unban_dm_user(guild.id, member.id)
     return f"✅ **{member.name}** has been unbanned from using the bot."
 
 
@@ -176,7 +241,7 @@ async def unban_user(author: discord.abc.User, member: discord.Member) -> str:
 async def block_banned_users(ctx: commands.Context) -> bool:
     if is_owner(ctx.author) or is_admin_or_owner(ctx.author):
         return True
-    if ctx.author.id in banned_users:
+    if ctx.guild is not None and is_banned(ctx.guild.id, ctx.author.id):
         await ctx.send("🚫 You are banned from using this bot.")
         return False
     return True
@@ -235,7 +300,7 @@ async def dm_slash(
             ephemeral=True,
         )
         return
-    if interaction.user.id in banned_users and not is_admin_or_owner(interaction.user):
+    if is_banned(interaction.guild.id, interaction.user.id) and not is_admin_or_owner(interaction.user):
         await interaction.response.send_message(
             "🚫 You are banned from using this bot.",
             ephemeral=True,
@@ -254,24 +319,39 @@ async def dm_slash(
 
 
 @bot.command(name="ban")
-async def ban(ctx: commands.Context, member: discord.Member | None = None) -> None:
+async def ban(
+    ctx: commands.Context,
+    member: discord.Member | None = None,
+    *,
+    reason: str = "No reason provided",
+) -> None:
     if member is None:
-        await ctx.send("❌ Usage: `!ban @user`")
+        await ctx.send("❌ Usage: `!ban @user [reason]`")
         return
-    await ctx.send(await ban_user(ctx.author, member))
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    await ctx.send(await ban_user(ctx.author, ctx.guild, member, reason))
 
 
 @bot.tree.command(name="ban", description="Ban a member from using the bot.")
-@app_commands.describe(member="The member to ban from using the bot")
-async def ban_slash(interaction: discord.Interaction, member: discord.Member) -> None:
-    if interaction.user.id in banned_users and not is_admin_or_owner(interaction.user):
+@app_commands.describe(
+    member="The member to ban from using the bot",
+    reason="The reason for the ban",
+)
+async def ban_slash(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    reason: str = "No reason provided",
+) -> None:
+    if interaction.guild is None:
         await interaction.response.send_message(
-            "🚫 You are banned from using this bot.",
+            "❌ This command can only be used in a server.",
             ephemeral=True,
         )
         return
     await interaction.response.send_message(
-        await ban_user(interaction.user, member),
+        await ban_user(interaction.user, interaction.guild, member, reason),
         ephemeral=True,
     )
 
@@ -281,20 +361,85 @@ async def unban(ctx: commands.Context, member: discord.Member | None = None) -> 
     if member is None:
         await ctx.send("❌ Usage: `!unban @user`")
         return
-    await ctx.send(await unban_user(ctx.author, member))
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    await ctx.send(await unban_user(ctx.author, ctx.guild, member))
 
 
 @bot.tree.command(name="unban", description="Allow a member to use the bot again.")
 @app_commands.describe(member="The member to unban")
 async def unban_slash(interaction: discord.Interaction, member: discord.Member) -> None:
-    if interaction.user.id in banned_users and not is_admin_or_owner(interaction.user):
+    if interaction.guild is None:
         await interaction.response.send_message(
-            "🚫 You are banned from using this bot.",
+            "❌ This command can only be used in a server.",
             ephemeral=True,
         )
         return
     await interaction.response.send_message(
-        await unban_user(interaction.user, member),
+        await unban_user(interaction.user, interaction.guild, member),
+        ephemeral=True,
+    )
+
+
+def build_ban_list_embed(guild: discord.Guild) -> discord.Embed:
+    bans = get_banned_dm_users(guild.id)
+    embed = discord.Embed(
+        title="🚫 Banned from Using DM Commands",
+        color=discord.Color.red(),
+    )
+
+    if not bans:
+        embed.description = "No users are currently banned."
+        embed.set_footer(text=f"{guild.name} • 0 banned users")
+        return embed
+
+    for user_id, reason, banned_at in bans[:25]:
+        user = guild.get_member(user_id) or bot.get_user(user_id)
+        name = f"{user} ({user_id})" if user else f"Unknown User ({user_id})"
+        banned_time = datetime.fromtimestamp(banned_at, tz=timezone.utc)
+        relative_time = discord.utils.format_dt(banned_time, style="R")
+        embed.add_field(
+            name=name,
+            value=f"**Reason:** {reason}\n**Banned:** {relative_time}",
+            inline=False,
+        )
+
+    remaining = len(bans) - 25
+    footer = f"{guild.name} • {len(bans)} banned user{'s' if len(bans) != 1 else ''}"
+    if remaining > 0:
+        footer += f" • {remaining} more not shown"
+    embed.set_footer(text=footer)
+    return embed
+
+
+@bot.command(name="banlist")
+async def ban_list(ctx: commands.Context) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    await ctx.send(embed=build_ban_list_embed(ctx.guild))
+
+
+@bot.tree.command(name="banlist", description="Show users banned from using DM commands.")
+async def ban_list_slash(interaction: discord.Interaction) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message(
+        embed=build_ban_list_embed(interaction.guild),
         ephemeral=True,
     )
 
@@ -365,6 +510,11 @@ def build_help_embed() -> discord.Embed:
     embed.add_field(
         name="`/unban` or `!unban`",
         value="Unban a member and allow them to use the bot again.",
+        inline=False,
+    )
+    embed.add_field(
+        name="`/banlist` or `!banlist`",
+        value="Show all bot DM bans, reasons, and relative ban times. Admin-only.",
         inline=False,
     )
     embed.add_field(

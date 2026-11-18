@@ -27,7 +27,7 @@ or use the `/dm` slash command.
 - 👤 Logs **Discord username + server nickname**
 - ☁️ Cloud-ready (Railway / Render / Fly.io)
 - 🔒 Secure token handling using environment variables
-- ⚡ Slash commands: `/dm`, `/ban`, `/unban`, `/allowroledm`, and `/help`
+- ⚡ Slash commands: `/dm`, `/ban`, `/unban`, `/banlist`, `/allowroledm`, and `/help`
 - 🔑 Allow selected roles to use `/dm` or `!dm`
 
 ---
