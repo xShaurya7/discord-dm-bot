@@ -680,7 +680,7 @@ async def relay_dm(
             message,
         )
         delivery_report = (
-            f"✅ **Delivered** to {member.mention}\n"
+            f"✅ **Delivered** to @{member.name} (`{member.id}`)\n"
             f"Conversation: `#{conversation_id}` • "
             f"<t:{int(sent_message.created_at.timestamp())}:F>"
         )
@@ -1017,7 +1017,8 @@ async def send_conversation_reply(
                 {"name": "Message", "value": message, "inline": False},
             ],
         )
-        return True, f"✅ Reply delivered to {member.mention if isinstance(member, discord.Member) else member}."
+        target_name = member.name if isinstance(member, discord.Member) else getattr(member, "name", str(member))
+        return True, f"✅ Reply delivered to @{target_name} (`{member.id}`)."
     except discord.Forbidden:
         return False, "❌ The target user is no longer accepting DMs."
     except discord.HTTPException as error:
