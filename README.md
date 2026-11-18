@@ -113,7 +113,9 @@ Custom embed fields:
 7. Hex color
 
 Omit optional fields with empty pipe values. If no image or thumbnail is supplied,
-the bot uses the server icon automatically.
+the bot uses the server icon automatically. Static image URLs are placed in the
+thumbnail or image area, while direct GIF URLs are rendered as animated embed
+images.
 
 ## ⚙️ Environment variables
 

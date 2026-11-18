@@ -1157,6 +1157,23 @@ def parse_embed_color(value: str | None) -> discord.Color:
     return discord.Color.blurple()
 
 
+def normalize_embed_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = value.strip().strip("<>")
+    if cleaned.startswith(("http://", "https://")):
+        return cleaned
+    return None
+
+
+def is_gif_url(value: str | None) -> bool:
+    url = normalize_embed_url(value)
+    if not url:
+        return False
+    lowered = url.lower().split("?", 1)[0]
+    return lowered.endswith(".gif") or "giphy.com/media/" in lowered
+
+
 def build_features_embed(guild: discord.Guild) -> discord.Embed:
     embed = discord.Embed(
         title="Nino Bot Features",
@@ -1229,6 +1246,12 @@ async def send_configured_embed(
         return False, "❌ The target channel must be in this server."
     if not channel.permissions_for(guild.me).send_messages:
         return False, f"❌ I do not have permission to send messages in {channel.mention}."
+
+    image_url = normalize_embed_url(image_url)
+    thumbnail_url = normalize_embed_url(thumbnail_url)
+    if is_gif_url(thumbnail_url):
+        image_url = image_url or thumbnail_url
+        thumbnail_url = None
 
     try:
         if preset == "features":
