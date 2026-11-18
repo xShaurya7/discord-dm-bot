@@ -607,64 +607,109 @@ async def role_list_slash(interaction: discord.Interaction) -> None:
     )
 
 
-def build_help_embed() -> discord.Embed:
-    embed = discord.Embed(
-        title="📖 Nino Bot Commands",
+HELP_CATEGORIES = {
+    "DM": (
+        "`/dm <user> <message>` • `!dm @user message`\n"
+        "Send an anonymous DM."
+    ),
+    "Moderation": (
+        "`/ban <user> [reason]` • `!ban @user [reason]`\n"
+        "Bot-ban a member.\n\n"
+        "`/unban <user>` • `!unban @user`\n"
+        "Remove a bot ban.\n\n"
+        "`/banlist` • `!banlist`\n"
+        "List bot-banned users."
+    ),
+    "Roles": (
+        "`/allowroledm <role>` • `!allowroledm @role`\n"
+        "Allow a role to use DMs.\n\n"
+        "`/removeroledm <role>` • `!removeroledm @role`\n"
+        "Remove DM access.\n\n"
+        "`/rolelist` • `!rolelist`\n"
+        "List allowed roles."
+    ),
+    "Utility": (
+        "`/help` • `!help`\n"
+        "Show this menu."
+    ),
+}
+
+
+def build_help_embed(category: str = "DM") -> discord.Embed:
+    return discord.Embed(
+        title=f"📖 Nino • {category}",
+        description=HELP_CATEGORIES[category],
         color=discord.Color.blurple(),
     )
-    embed.add_field(
-        name="`/dm` • `!dm`",
-        value="Send an anonymous DM.",
-        inline=False,
-    )
-    embed.add_field(
-        name="`/ban` • `!ban`",
-        value="Bot-ban a member.",
-        inline=False,
-    )
-    embed.add_field(
-        name="`/unban` • `!unban`",
-        value="Remove a bot ban.",
-        inline=False,
-    )
-    embed.add_field(
-        name="`/banlist` • `!banlist`",
-        value="Show bot-banned users.",
-        inline=False,
-    )
-    embed.add_field(
-        name="`/allowroledm` • `!allowroledm`",
-        value="Allow a role to use DMs.",
-        inline=False,
-    )
-    embed.add_field(
-        name="`/removeroledm` • `!removeroledm`",
-        value="Remove DM access from a role.",
-        inline=False,
-    )
-    embed.add_field(
-        name="`/rolelist` • `!rolelist`",
-        value="Show allowed roles.",
-        inline=False,
-    )
-    embed.add_field(
-        name="`/help` • `!help`",
-        value="Show this menu.",
-        inline=False,
-    )
-    embed.set_footer(text="Nino DM Relay Bot")
-    return embed
+
+
+class HelpView(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=180)
+
+    async def show_category(
+        self,
+        interaction: discord.Interaction,
+        category: str,
+    ) -> None:
+        await interaction.response.edit_message(
+            embed=build_help_embed(category),
+            view=HelpView(),
+        )
+
+    @discord.ui.button(label="DM", style=discord.ButtonStyle.primary)
+    async def dm_category(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.show_category(interaction, "DM")
+
+    @discord.ui.button(label="Moderation", style=discord.ButtonStyle.secondary)
+    async def moderation_category(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.show_category(interaction, "Moderation")
+
+    @discord.ui.button(label="Roles", style=discord.ButtonStyle.secondary)
+    async def roles_category(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.show_category(interaction, "Roles")
+
+    @discord.ui.button(label="Utility", style=discord.ButtonStyle.secondary)
+    async def utility_category(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await self.show_category(interaction, "Utility")
+
+    @discord.ui.button(label="×", style=discord.ButtonStyle.danger)
+    async def close(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ) -> None:
+        await interaction.response.defer()
+        if interaction.message is not None:
+            await interaction.message.delete()
 
 
 @bot.command(name="help")
 async def help_command(ctx: commands.Context) -> None:
-    await ctx.send(embed=build_help_embed())
+    await ctx.send(embed=build_help_embed(), view=HelpView())
 
 
 @bot.tree.command(name="help", description="Show all available bot commands.")
 async def help_slash(interaction: discord.Interaction) -> None:
     await interaction.response.send_message(
         embed=build_help_embed(),
+        view=HelpView(),
         ephemeral=True,
     )
 
