@@ -28,6 +28,7 @@ or use the `/dm` slash command.
 - ☁️ Cloud-ready (Railway / Render / Fly.io)
 - 🔒 Secure token handling using environment variables
 - ⚡ Slash commands: `/dm`, `/ban`, `/unban`, `/banlist`, `/allowroledm`, `/removeroledm`, `/rolelist`, and `/help`
+- 👤 `/info` and `!info` show detailed server member profiles
 - 🔑 Allow selected roles to use `/dm` or `!dm`
 - ⚙️ Per-server settings for cooldown, maintenance mode, and audit logging
 

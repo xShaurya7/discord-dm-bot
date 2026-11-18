@@ -1209,6 +1209,149 @@ async def disable_audit_slash(interaction: discord.Interaction) -> None:
     )
 
 
+def build_member_info_embed(member: discord.Member) -> discord.Embed:
+    now = datetime.now(timezone.utc)
+    account_age = discord.utils.format_dt(member.created_at, style="R")
+    server_age = (
+        discord.utils.format_dt(member.joined_at, style="R")
+        if member.joined_at is not None
+        else "Unknown"
+    )
+
+    display_name = member.display_name
+    if member.nick:
+        identity = f"{member} (`{member.name}`)"
+    else:
+        identity = f"{member}"
+
+    embed = discord.Embed(
+        title=f"👤 {display_name}",
+        description=identity,
+        color=member.color if member.color.value else discord.Color.blurple(),
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+
+    permissions = member.guild_permissions
+    permission_names: list[str] = []
+    if permissions.administrator:
+        permission_names.append("Administrator")
+    else:
+        permission_map = (
+            ("Manage Server", permissions.manage_guild),
+            ("Manage Channels", permissions.manage_channels),
+            ("Manage Roles", permissions.manage_roles),
+            ("Manage Messages", permissions.manage_messages),
+            ("Moderate Members", permissions.moderate_members),
+            ("Kick Members", permissions.kick_members),
+            ("Ban Members", permissions.ban_members),
+            ("Mention Everyone", permissions.mention_everyone),
+            ("Manage Nicknames", permissions.manage_nicknames),
+        )
+        permission_names.extend(name for name, allowed in permission_map if allowed)
+    if not permission_names:
+        permission_names.append("Member")
+
+    roles = [role for role in reversed(member.roles) if role.id != member.guild.id]
+    role_text = " ".join(role.mention for role in roles[:15])
+    if len(roles) > 15:
+        role_text += f" +{len(roles) - 15} more"
+    if not role_text:
+        role_text = "@everyone"
+
+    status_name = {
+        discord.Status.online: "🟢 Online",
+        discord.Status.idle: "🌙 Idle",
+        discord.Status.dnd: "⛔ Do Not Disturb",
+        discord.Status.offline: "⚫ Offline",
+    }.get(member.status, "⚫ Offline")
+
+    boost_status = f"<t:{int(member.premium_since.timestamp())}:R>" if member.premium_since else "Not boosting"
+
+    embed.add_field(
+        name="📅 Account",
+        value=f"Created {account_age}\n<t:{int(member.created_at.timestamp())}:F>",
+        inline=True,
+    )
+    embed.add_field(
+        name="🚪 Server",
+        value=f"Joined {server_age}\n<t:{int(member.joined_at.timestamp())}:F>" if member.joined_at else "Unknown",
+        inline=True,
+    )
+    embed.add_field(
+        name="🆔 Member ID",
+        value=f"`{member.id}`",
+        inline=False,
+    )
+    embed.add_field(
+        name="📊 Status",
+        value=status_name,
+        inline=True,
+    )
+    embed.add_field(
+        name="💎 Boosting",
+        value=boost_status,
+        inline=True,
+    )
+    embed.add_field(
+        name="🛡️ Key Permissions",
+        value=", ".join(permission_names[:12]),
+        inline=False,
+    )
+    embed.add_field(
+        name=f"🎭 Roles ({len(roles)})",
+        value=role_text,
+        inline=False,
+    )
+    embed.add_field(
+        name="🏷️ Account Type",
+        value="Bot" if member.bot else "Human",
+        inline=True,
+    )
+    embed.set_footer(text=f"{member.guild.name} • Requested profile")
+    return embed
+
+
+@bot.command(name="info")
+async def info(ctx: commands.Context, member: discord.Member | None = None) -> None:
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    target = member or ctx.author
+    if not isinstance(target, discord.Member):
+        target = ctx.guild.get_member(target.id)
+    if target is None:
+        await ctx.send("❌ I could not find that member.")
+        return
+    await ctx.send(embed=build_member_info_embed(target))
+
+
+@bot.tree.command(name="info", description="Show information about a server member.")
+@app_commands.describe(member="The member to inspect (defaults to you)")
+async def info_slash(
+    interaction: discord.Interaction,
+    member: discord.Member | None = None,
+) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    target = member or interaction.user
+    if not isinstance(target, discord.Member):
+        target = interaction.guild.get_member(target.id)
+    if target is None:
+        await interaction.response.send_message(
+            "❌ I could not find that member.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message(
+        embed=build_member_info_embed(target),
+        ephemeral=True,
+    )
+
+
 HELP_CATEGORIES = {
     "All": "",
     "DM": (
@@ -1234,6 +1377,8 @@ HELP_CATEGORIES = {
     "Utility": (
         "`/help` • `!help`\n"
         "Show this menu.\n\n"
+        "`/info [member]` • `!info [@member]`\n"
+        "Show member profile details.\n\n"
         "`/settings` • `!settings`\n"
         "Show server settings.\n\n"
         "`/setcooldown <seconds>` • `!setcooldown <seconds>`\n"
@@ -1295,6 +1440,11 @@ def build_help_embed(category: str = "All") -> discord.Embed:
         embed.add_field(
             name="`/help` or `!help`",
             value="Show this command guide.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/info` or `!info`",
+            value="Show detailed information about a server member.",
             inline=False,
         )
         embed.add_field(
