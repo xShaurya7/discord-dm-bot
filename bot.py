@@ -479,6 +479,12 @@ async def block_banned_users(ctx: commands.Context) -> bool:
 @bot.event
 async def on_ready() -> None:
     global synced_commands
+    await bot.change_presence(
+        status=discord.Status.idle,
+        activity=discord.CustomActivity(
+            name="Made by Shaurya with love ❤️",
+        ),
+    )
     if not synced_commands:
         if GUILD_ID is not None:
             guild = discord.Object(id=GUILD_ID)
