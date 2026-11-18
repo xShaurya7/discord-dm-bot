@@ -39,6 +39,7 @@ or use the `/dm` slash command.
 - 🪝 Audit logs delivered through private-server webhooks
 - 💬 Two-way DM conversation replies through bot DMs
 - 📊 `/dmhistory` and `!dmhistory` show delivered, blocked, failed, and reply reports
+- 📢 `/send` and `!send` let admins send a message to a specified channel
 
 ---
 
@@ -80,6 +81,7 @@ The limit accepts 1–25 reports. Reports show **Delivered**, **Blocked**, **Fai
 | `/dm @user message` or `!dm @user message` | Send an anonymous DM |
 | `/reply @user message` or `!reply @user message` | Reply to an active DM conversation |
 | `/dmhistory [limit]` or `!dmhistory [limit]` | View recent delivery reports (admin-only) |
+| `/send #channel message` or `!send #channel message` | Send a message to a specified channel (admin-only; `!say` is also supported) |
 | `/enableaudit` or `!enableaudit` | Create and enable audit logging |
 | `/disableaudit` or `!disableaudit` | Disable audit logging |
 

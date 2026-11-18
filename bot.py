@@ -1145,6 +1145,82 @@ async def dm_history_slash(
     )
 
 
+async def send_channel_message(
+    author: discord.abc.User,
+    guild: discord.Guild,
+    channel: discord.TextChannel,
+    message: str,
+) -> tuple[bool, str]:
+    if not is_admin_or_owner(author):
+        return False, "❌ You are not allowed to use this command."
+    if channel.guild.id != guild.id:
+        return False, "❌ The target channel must be in this server."
+    if not channel.permissions_for(guild.me).send_messages:
+        return False, f"❌ I do not have permission to send messages in {channel.mention}."
+
+    try:
+        sent_message = await channel.send(message)
+        await send_discord_audit(
+            guild,
+            "📢 Channel Message Sent",
+            [
+                {"name": "Channel", "value": channel.mention, "inline": True},
+                {"name": "Moderator", "value": f"{author} ({author.id})", "inline": False},
+                {"name": "Message", "value": message, "inline": False},
+                {"name": "Message ID", "value": f"`{sent_message.id}`", "inline": True},
+            ],
+        )
+        return True, f"✅ Message sent in {channel.mention}."
+    except discord.Forbidden:
+        return False, f"❌ I could not send a message in {channel.mention}."
+    except discord.HTTPException as error:
+        return False, f"❌ Failed to send the message: {error}"
+
+
+@bot.command(name="send", aliases=["say"])
+async def send_message_to_channel(
+    ctx: commands.Context,
+    channel: discord.TextChannel | None = None,
+    *,
+    message: str | None = None,
+) -> None:
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    if channel is None or not message:
+        await ctx.send("❌ Usage: `!send #channel message`")
+        return
+    sent, response = await send_channel_message(
+        ctx.author,
+        ctx.guild,
+        channel,
+        message,
+    )
+    await ctx.send(response, delete_after=15)
+
+
+@bot.tree.command(name="send", description="Send a message to a specified channel.")
+@app_commands.describe(channel="The channel that should receive the message", message="The message to send")
+async def send_message_to_channel_slash(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    message: str,
+) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    sent, response = await send_channel_message(
+        interaction.user,
+        interaction.guild,
+        channel,
+        message,
+    )
+    await interaction.response.send_message(response, ephemeral=True)
+
+
 @bot.command(name="ban")
 async def ban(
     ctx: commands.Context,
@@ -2011,6 +2087,8 @@ HELP_CATEGORIES = {
     "Utility": (
         "`/help` • `!help`\n"
         "Show this menu.\n\n"
+        "`/send <channel> <message>` • `!send #channel message`\n"
+        "Send a message to a specified channel. Admin-only.\n\n"
         "`/info [member]` • `!info [@member]`\n"
         "Show member profile details.\n\n"
         "`/prefixlist` • `!prefixlist`\n"
@@ -2051,6 +2129,11 @@ def build_help_embed(category: str = "All") -> discord.Embed:
         embed.add_field(
             name="`/dmhistory` or `!dmhistory`",
             value="Show recent delivered, blocked, failed, and replied DM reports. Admin-only.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/send` or `!send`",
+            value="Send a message to a specified channel. Aliases: `!say`. Admin-only.",
             inline=False,
         )
         embed.add_field(
