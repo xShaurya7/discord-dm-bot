@@ -300,13 +300,84 @@ async def find_or_create_audit_channel(
     guild: discord.Guild,
     channel_name: str,
 ) -> discord.TextChannel | None:
+    category = discord.utils.get(
+        guild.categories,
+        name="Audit",
+    )
+    if category is None:
+        try:
+            category = await guild.create_category(
+                "Audit",
+                position=len(guild.categories),
+                reason="Created automatically by Nino audit logging",
+            )
+        except discord.HTTPException as error:
+            print(f"Could not create Audit category in {guild.name}: {error}")
+            return None
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=False,
+            send_messages=False,
+            read_message_history=False,
+        )
+    }
+
+    for role in guild.roles:
+        if role.permissions.administrator:
+            overwrites[role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+            )
+
+    owner = guild.owner
+    if owner is not None:
+        overwrites[owner] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+        )
+
+    if guild.me is not None:
+        overwrites[guild.me] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_channels=True,
+        )
+
+    if OWNER_ID is not None:
+        bot_owner = guild.get_member(OWNER_ID)
+        if bot_owner is not None:
+            overwrites[bot_owner] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+            )
+
+    try:
+        await category.edit(overwrites=overwrites)
+    except discord.HTTPException as error:
+        print(f"Could not secure Audit category in {guild.name}: {error}")
+
     channel = discord.utils.get(guild.text_channels, name=channel_name)
     if channel is not None:
+        try:
+            await channel.edit(
+                category=category,
+                overwrites=overwrites,
+                reason="Moved into private Nino audit logging",
+            )
+        except discord.HTTPException as error:
+            print(f"Could not secure audit channel in {guild.name}: {error}")
         return channel
+
     try:
         return await guild.create_text_channel(
             channel_name,
-            position=len(guild.channels),
+            category=category,
+            overwrites=overwrites,
             reason="Created automatically by Nino audit logging",
         )
     except discord.HTTPException as error:
