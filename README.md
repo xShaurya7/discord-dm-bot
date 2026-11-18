@@ -27,7 +27,8 @@ or use the `/dm` slash command.
 - 👤 Logs **Discord username + server nickname**
 - ☁️ Cloud-ready (Railway / Render / Fly.io)
 - 🔒 Secure token handling using environment variables
-- ⚡ Slash commands: `/dm`, `/ban`, `/unban`, and `/help`
+- ⚡ Slash commands: `/dm`, `/ban`, `/unban`, `/allowroledm`, and `/help`
+- 🔑 Allow selected roles to use `/dm` or `!dm`
 
 ---
 
@@ -42,6 +43,7 @@ Instead of users directly DMing each other, the bot acts as a **relay**.
 - `AUDIT_WEBHOOK_URL` (optional): Webhook URL for DM audit logs.
 - `GUILD_ID` (optional): Server ID for immediate slash-command registration. If omitted,
   commands are synced globally and may take longer to appear.
+- `DATABASE_PATH` (optional): SQLite database location for allowed roles.
 
 For local or panel hosting, variables may be stored in a private `.env` file:
 

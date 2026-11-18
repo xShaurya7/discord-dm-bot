@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sqlite3
 import time
 
 import discord
@@ -25,6 +26,17 @@ GUILD_ID = int(GUILD_ID_ENV) if GUILD_ID_ENV and GUILD_ID_ENV.isdigit() else Non
 COOLDOWN_SECONDS = 5 * 60
 cooldowns: dict[int, float] = {}
 banned_users: set[int] = set()
+DATABASE_PATH = os.getenv("DATABASE_PATH", "nino.db")
+
+database = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+database.execute("""
+    CREATE TABLE IF NOT EXISTS allowed_dm_roles (
+        guild_id INTEGER NOT NULL,
+        role_id INTEGER NOT NULL,
+        PRIMARY KEY (guild_id, role_id)
+    )
+""")
+database.commit()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -41,6 +53,34 @@ def is_owner(user: discord.abc.User) -> bool:
 def is_admin_or_owner(user: discord.abc.User) -> bool:
     permissions = getattr(user, "guild_permissions", None)
     return is_owner(user) or getattr(permissions, "administrator", False)
+
+
+def allow_dm_role(guild_id: int, role_id: int) -> bool:
+    with database:
+        cursor = database.execute(
+            "INSERT OR IGNORE INTO allowed_dm_roles (guild_id, role_id) VALUES (?, ?)",
+            (guild_id, role_id),
+        )
+    return cursor.rowcount > 0
+
+
+def can_use_dm(user: discord.abc.User, guild_id: int) -> bool:
+    if is_owner(user) or is_admin_or_owner(user):
+        return True
+    if user.id in banned_users:
+        return False
+
+    member_roles = getattr(user, "roles", ())
+    role_ids = {role.id for role in member_roles}
+    if not role_ids:
+        return False
+
+    cursor = database.execute(
+        "SELECT role_id FROM allowed_dm_roles WHERE guild_id = ?",
+        (guild_id,),
+    )
+    allowed_role_ids = {row[0] for row in cursor.fetchall()}
+    return bool(role_ids & allowed_role_ids)
 
 
 def is_on_cooldown(user_id: int) -> bool:
@@ -83,7 +123,9 @@ async def relay_dm(
     member: discord.Member,
     message: str,
 ) -> tuple[bool, str]:
-    if not is_admin_or_owner(author):
+    if not can_use_dm(author, guild.id):
+        if author.id in banned_users:
+            return False, "🚫 You are banned from using this bot."
         return False, "❌ You are not allowed to use this command."
 
     if not is_owner(author):
@@ -254,6 +296,53 @@ async def unban_slash(interaction: discord.Interaction, member: discord.Member) 
     )
 
 
+@bot.command(name="allowroledm")
+async def allow_role_dm(ctx: commands.Context, role: discord.Role | None = None) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    if role is None:
+        await ctx.send("❌ Usage: `!allowroledm @role`")
+        return
+
+    if allow_dm_role(ctx.guild.id, role.id):
+        await ctx.send(f"✅ **{role.name}** can now use the DM commands.")
+    else:
+        await ctx.send(f"⚠️ **{role.name}** is already allowed to use the DM commands.")
+
+
+@bot.tree.command(
+    name="allowroledm",
+    description="Allow a role to use the DM command.",
+)
+@app_commands.describe(role="The role that should be allowed to use /dm")
+async def allow_role_dm_slash(
+    interaction: discord.Interaction,
+    role: discord.Role,
+) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+
+    if allow_dm_role(interaction.guild.id, role.id):
+        response = f"✅ **{role.name}** can now use the DM commands."
+    else:
+        response = f"⚠️ **{role.name}** is already allowed to use the DM commands."
+    await interaction.response.send_message(response, ephemeral=True)
+
+
 def build_help_embed() -> discord.Embed:
     embed = discord.Embed(
         title="📖 Nino Bot Commands",
@@ -273,6 +362,11 @@ def build_help_embed() -> discord.Embed:
     embed.add_field(
         name="`/unban` or `!unban`",
         value="Unban a member and allow them to use the bot again.",
+        inline=False,
+    )
+    embed.add_field(
+        name="`/allowroledm` or `!allowroledm`",
+        value="Allow a role to use the DM command. Admin-only.",
         inline=False,
     )
     embed.add_field(
