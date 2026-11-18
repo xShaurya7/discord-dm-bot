@@ -24,8 +24,8 @@ if not BOT_TOKEN:
 OWNER_ID = int(OWNER_ID_ENV) if OWNER_ID_ENV and OWNER_ID_ENV.isdigit() else None
 GUILD_ID = int(GUILD_ID_ENV) if GUILD_ID_ENV and GUILD_ID_ENV.isdigit() else None
 
-COOLDOWN_SECONDS = 5 * 60
-cooldowns: dict[int, float] = {}
+DEFAULT_COOLDOWN_SECONDS = 5 * 60
+cooldowns: dict[tuple[int, int], float] = {}
 DATABASE_PATH = os.getenv("DATABASE_PATH", "nino.db")
 
 database = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
@@ -45,6 +45,25 @@ database.execute("""
         PRIMARY KEY (guild_id, user_id)
     )
 """)
+database.execute("""
+    CREATE TABLE IF NOT EXISTS guild_settings (
+        guild_id INTEGER PRIMARY KEY,
+        cooldown_seconds INTEGER NOT NULL DEFAULT 300,
+        dm_enabled INTEGER NOT NULL DEFAULT 1
+    )
+""")
+columns = {
+    row[1]
+    for row in database.execute("PRAGMA table_info(guild_settings)").fetchall()
+}
+if "audit_channel_id" not in columns:
+    database.execute(
+        "ALTER TABLE guild_settings ADD COLUMN audit_channel_id INTEGER"
+    )
+if "audit_enabled" not in columns:
+    database.execute(
+        "ALTER TABLE guild_settings ADD COLUMN audit_enabled INTEGER NOT NULL DEFAULT 0"
+    )
 database.commit()
 
 intents = discord.Intents.default()
@@ -137,6 +156,85 @@ def get_banned_dm_users(guild_id: int) -> list[tuple[int, str, float]]:
     return cursor.fetchall()
 
 
+def get_guild_settings(guild_id: int) -> tuple[int, bool]:
+    cursor = database.execute(
+        "SELECT cooldown_seconds, dm_enabled FROM guild_settings WHERE guild_id = ?",
+        (guild_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        set_guild_settings(guild_id, DEFAULT_COOLDOWN_SECONDS, True)
+        return DEFAULT_COOLDOWN_SECONDS, True
+    return int(row[0]), bool(row[1])
+
+
+def set_guild_settings(
+    guild_id: int,
+    cooldown_seconds: int,
+    dm_enabled: bool,
+) -> None:
+    with database:
+        database.execute(
+            """
+            INSERT INTO guild_settings (guild_id, cooldown_seconds, dm_enabled)
+            VALUES (?, ?, ?)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET cooldown_seconds = excluded.cooldown_seconds,
+                          dm_enabled = excluded.dm_enabled
+            """,
+            (guild_id, cooldown_seconds, int(dm_enabled)),
+        )
+
+
+def set_guild_cooldown(guild_id: int, cooldown_seconds: int) -> None:
+    _, dm_enabled = get_guild_settings(guild_id)
+    set_guild_settings(guild_id, cooldown_seconds, dm_enabled)
+
+
+def set_guild_dm_enabled(guild_id: int, dm_enabled: bool) -> None:
+    cooldown_seconds, _ = get_guild_settings(guild_id)
+    set_guild_settings(guild_id, cooldown_seconds, dm_enabled)
+
+
+def get_audit_settings(guild_id: int) -> tuple[bool, int | None]:
+    cursor = database.execute(
+        "SELECT audit_enabled, audit_channel_id FROM guild_settings WHERE guild_id = ?",
+        (guild_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return False, None
+    return bool(row[0]), int(row[1]) if row[1] is not None else None
+
+
+def set_audit_channel(guild_id: int, channel_id: int, enabled: bool = True) -> None:
+    cooldown_seconds, dm_enabled = get_guild_settings(guild_id)
+    with database:
+        database.execute(
+            """
+            INSERT INTO guild_settings
+                (guild_id, cooldown_seconds, dm_enabled, audit_enabled, audit_channel_id)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET audit_enabled = excluded.audit_enabled,
+                          audit_channel_id = excluded.audit_channel_id
+            """,
+            (guild_id, cooldown_seconds, int(dm_enabled), int(enabled), channel_id),
+        )
+
+
+def parse_seconds(value: str) -> int | None:
+    value = value.strip().lower()
+    if value.isdigit():
+        return int(value)
+    if len(value) > 1 and value[-1] in ("s", "m", "h"):
+        amount = value[:-1]
+        if amount.isdigit():
+            multiplier = {"s": 1, "m": 60, "h": 3600}[value[-1]]
+            return int(amount) * multiplier
+    return None
+
+
 def can_use_dm(user: discord.abc.User, guild_id: int) -> bool:
     if is_owner(user) or is_admin_or_owner(user):
         return True
@@ -156,12 +254,16 @@ def can_use_dm(user: discord.abc.User, guild_id: int) -> bool:
     return bool(role_ids & allowed_role_ids)
 
 
-def is_on_cooldown(user_id: int) -> bool:
-    return user_id in cooldowns and time.time() - cooldowns[user_id] < COOLDOWN_SECONDS
+def is_on_cooldown(guild_id: int, user_id: int) -> bool:
+    cooldown_seconds, _ = get_guild_settings(guild_id)
+    key = (guild_id, user_id)
+    return key in cooldowns and time.time() - cooldowns[key] < cooldown_seconds
 
 
-def remaining_cooldown(user_id: int) -> int:
-    return max(1, int(COOLDOWN_SECONDS - (time.time() - cooldowns[user_id])))
+def remaining_cooldown(guild_id: int, user_id: int) -> int:
+    cooldown_seconds, _ = get_guild_settings(guild_id)
+    key = (guild_id, user_id)
+    return max(1, int(cooldown_seconds - (time.time() - cooldowns[key])))
 
 
 def send_audit_log(server: str, channel: str, sender: str, target: str, message: str) -> None:
@@ -189,6 +291,82 @@ def send_audit_log(server: str, channel: str, sender: str, target: str, message:
         print(f"Audit log failed: {error}")
 
 
+async def find_or_create_audit_channel(
+    guild: discord.Guild,
+    channel_name: str,
+) -> discord.TextChannel | None:
+    channel = discord.utils.get(guild.text_channels, name=channel_name)
+    if channel is not None:
+        return channel
+    try:
+        return await guild.create_text_channel(
+            channel_name,
+            position=len(guild.channels),
+            reason="Created automatically by Nino audit logging",
+        )
+    except discord.HTTPException as error:
+        print(f"Could not create audit channel in {guild.name}: {error}")
+        return None
+
+
+def build_discord_audit_embed(title: str, fields: list[dict]) -> discord.Embed:
+    embed = discord.Embed(title=title, color=3447003)
+    embed.timestamp = datetime.now(timezone.utc)
+    for field in fields:
+        embed.add_field(
+            name=field["name"],
+            value=str(field["value"])[:1024],
+            inline=field.get("inline", False),
+        )
+    return embed
+
+
+async def send_discord_audit(
+    source_guild: discord.Guild,
+    title: str,
+    fields: list[dict],
+) -> None:
+    embed = build_discord_audit_embed(title, fields)
+    audit_enabled, audit_channel_id = get_audit_settings(source_guild.id)
+    sent_channel_ids: set[int] = set()
+
+    if audit_enabled:
+        channel = (
+            source_guild.get_channel(audit_channel_id)
+            if audit_channel_id is not None
+            else None
+        )
+        if channel is None:
+            channel = await find_or_create_audit_channel(
+                source_guild,
+                "nino-audit-log",
+            )
+            if channel is not None:
+                set_audit_channel(source_guild.id, channel.id, True)
+        if isinstance(channel, discord.TextChannel):
+            try:
+                await channel.send(embed=embed)
+                sent_channel_ids.add(channel.id)
+            except discord.HTTPException as error:
+                print(f"Could not send guild audit log: {error}")
+
+    if GUILD_ID is not None:
+        main_guild = bot.get_guild(GUILD_ID)
+        if main_guild is not None:
+            main_channel = await find_or_create_audit_channel(
+                main_guild,
+                "nino-main-audit-log",
+            )
+            if (
+                isinstance(main_channel, discord.TextChannel)
+                and main_channel.id not in sent_channel_ids
+            ):
+                try:
+                    await main_channel.send(embed=embed)
+                except discord.HTTPException as error:
+                    print(f"Could not send main-server audit log: {error}")
+
+
 async def relay_dm(
     author: discord.abc.User,
     guild: discord.Guild,
@@ -199,15 +377,19 @@ async def relay_dm(
     if bot.user is not None and member.id == bot.user.id:
         return False, "❌ You cannot send a DM to the bot itself."
 
+    _, dm_enabled = get_guild_settings(guild.id)
+    if not dm_enabled and not is_admin_or_owner(author):
+        return False, "⏸️ DM commands are temporarily disabled in this server."
+
     if not can_use_dm(author, guild.id):
         if is_banned(guild.id, author.id):
             return False, "🚫 You are banned from using this bot."
         return False, "❌ You are not allowed to use this command."
 
     if not is_owner(author):
-        if is_on_cooldown(author.id):
-            return False, f"⏳ Wait {remaining_cooldown(author.id)} seconds."
-        cooldowns[author.id] = time.time()
+        if is_on_cooldown(guild.id, author.id):
+            return False, f"⏳ Wait {remaining_cooldown(guild.id, author.id)} seconds."
+        cooldowns[(guild.id, author.id)] = time.time()
 
     try:
         await member.send(message)
@@ -224,6 +406,17 @@ async def relay_dm(
         f"{member.name} (nick: {member.display_name})",
         message,
     )
+    await send_discord_audit(
+        guild,
+        "📩 DM Relay Used",
+        [
+            {"name": "Server", "value": guild.name, "inline": True},
+            {"name": "Channel", "value": channel_name, "inline": True},
+            {"name": "Sender", "value": f"{author} ({author.id})", "inline": False},
+            {"name": "Target User", "value": f"{member} ({member.id})", "inline": False},
+            {"name": "Message", "value": message, "inline": False},
+        ],
+    )
     return True, "✅ DM sent successfully."
 
 
@@ -238,6 +431,16 @@ async def ban_user(
     if is_banned(guild.id, member.id):
         return "⚠️ User is already banned from using the bot."
     ban_dm_user(guild.id, member.id, reason)
+    await send_discord_audit(
+        guild,
+        "🚫 DM Bot Ban",
+        [
+            {"name": "Server", "value": guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{author} ({author.id})", "inline": False},
+            {"name": "User", "value": f"{member} ({member.id})", "inline": False},
+            {"name": "Reason", "value": reason.strip() or "No reason provided", "inline": False},
+        ],
+    )
     return f"🚫 **{member.name}** has been banned from using the bot.\nReason: {reason.strip() or 'No reason provided'}"
 
 
@@ -251,6 +454,15 @@ async def unban_user(
     if not is_banned(guild.id, member.id):
         return "⚠️ User is not banned."
     unban_dm_user(guild.id, member.id)
+    await send_discord_audit(
+        guild,
+        "✅ DM Bot Unban",
+        [
+            {"name": "Server", "value": guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{author} ({author.id})", "inline": False},
+            {"name": "User", "value": f"{member} ({member.id})", "inline": False},
+        ],
+    )
     return f"✅ **{member.name}** has been unbanned from using the bot."
 
 
@@ -474,6 +686,15 @@ async def allow_role_dm(ctx: commands.Context, role: discord.Role | None = None)
         return
 
     if allow_dm_role(ctx.guild.id, role.id):
+        await send_discord_audit(
+            ctx.guild,
+            "🔑 Role Allowed to Use DMs",
+            [
+                {"name": "Server", "value": ctx.guild.name, "inline": True},
+                {"name": "Moderator", "value": f"{ctx.author} ({ctx.author.id})", "inline": False},
+                {"name": "Role", "value": f"{role.mention} ({role.id})", "inline": False},
+            ],
+        )
         await ctx.send(f"✅ **Role allowed to use DMs:** {role.mention}")
     else:
         await ctx.send(f"ℹ️ **Role already allowed:** {role.mention}")
@@ -503,6 +724,15 @@ async def allow_role_dm_slash(
 
     if allow_dm_role(interaction.guild.id, role.id):
         response = f"✅ **Role allowed to use DMs:** {role.mention}"
+        await send_discord_audit(
+            interaction.guild,
+            "🔑 Role Allowed to Use DMs",
+            [
+                {"name": "Server", "value": interaction.guild.name, "inline": True},
+                {"name": "Moderator", "value": f"{interaction.user} ({interaction.user.id})", "inline": False},
+                {"name": "Role", "value": f"{role.mention} ({role.id})", "inline": False},
+            ],
+        )
     else:
         response = f"ℹ️ **Role already allowed:** {role.mention}"
     await interaction.response.send_message(response, ephemeral=True)
@@ -521,6 +751,15 @@ async def remove_role_dm(ctx: commands.Context, role: discord.Role | None = None
         return
 
     if remove_dm_role(ctx.guild.id, role.id):
+        await send_discord_audit(
+            ctx.guild,
+            "🔑 Role Removed from DM Access",
+            [
+                {"name": "Server", "value": ctx.guild.name, "inline": True},
+                {"name": "Moderator", "value": f"{ctx.author} ({ctx.author.id})", "inline": False},
+                {"name": "Role", "value": f"{role.mention} ({role.id})", "inline": False},
+            ],
+        )
         await ctx.send(f"✅ **Role removed from DM access:** {role.mention}")
     else:
         await ctx.send(f"ℹ️ **Role was not allowed:** {role.mention}")
@@ -550,6 +789,15 @@ async def remove_role_dm_slash(
 
     if remove_dm_role(interaction.guild.id, role.id):
         response = f"✅ **Role removed from DM access:** {role.mention}"
+        await send_discord_audit(
+            interaction.guild,
+            "🔑 Role Removed from DM Access",
+            [
+                {"name": "Server", "value": interaction.guild.name, "inline": True},
+                {"name": "Moderator", "value": f"{interaction.user} ({interaction.user.id})", "inline": False},
+                {"name": "Role", "value": f"{role.mention} ({role.id})", "inline": False},
+            ],
+        )
     else:
         response = f"ℹ️ **Role was not allowed:** {role.mention}"
     await interaction.response.send_message(response, ephemeral=True)
@@ -607,6 +855,303 @@ async def role_list_slash(interaction: discord.Interaction) -> None:
     )
 
 
+def build_settings_embed(guild: discord.Guild) -> discord.Embed:
+    cooldown_seconds, dm_enabled = get_guild_settings(guild.id)
+    audit_enabled, audit_channel_id = get_audit_settings(guild.id)
+    audit_channel = guild.get_channel(audit_channel_id) if audit_channel_id is not None else None
+
+    embed = discord.Embed(
+        title="⚙️ Nino Server Settings",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="Cooldown",
+        value=f"{cooldown_seconds} seconds",
+        inline=True,
+    )
+    embed.add_field(
+        name="DM Commands",
+        value="Enabled" if dm_enabled else "Disabled",
+        inline=True,
+    )
+    embed.add_field(
+        name="Guild Audit Log",
+        value=audit_channel.mention if isinstance(audit_channel, discord.TextChannel) else ("Enabled" if audit_enabled else "Disabled"),
+        inline=False,
+    )
+    embed.set_footer(text=guild.name)
+    return embed
+
+
+@bot.command(name="settings")
+async def settings(ctx: commands.Context) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    await ctx.send(embed=build_settings_embed(ctx.guild))
+
+
+@bot.tree.command(name="settings", description="Show this server's Nino settings.")
+async def settings_slash(interaction: discord.Interaction) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message(
+        embed=build_settings_embed(interaction.guild),
+        ephemeral=True,
+    )
+
+
+@bot.command(name="setcooldown")
+async def set_cooldown(ctx: commands.Context, value: str | None = None) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    if value is None:
+        await ctx.send("❌ Usage: `!setcooldown 5m` or `!setcooldown 300`")
+        return
+    seconds = parse_seconds(value)
+    if seconds is None or seconds < 0 or seconds > 86400:
+        await ctx.send("❌ Cooldown must be between `0` and `86400` seconds.")
+        return
+    set_guild_cooldown(ctx.guild.id, seconds)
+    await send_discord_audit(
+        ctx.guild,
+        "⚙️ Cooldown Updated",
+        [
+            {"name": "Server", "value": ctx.guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{ctx.author} ({ctx.author.id})", "inline": False},
+            {"name": "Cooldown", "value": "Disabled" if seconds == 0 else f"{seconds} seconds", "inline": True},
+        ],
+    )
+    await ctx.send(
+        "✅ **Server cooldown updated:** "
+        + ("Disabled" if seconds == 0 else f"{seconds} seconds")
+    )
+
+
+@bot.tree.command(name="setcooldown", description="Set this server's DM cooldown.")
+@app_commands.describe(seconds="Cooldown in seconds (0 to disable, maximum 86400)")
+async def set_cooldown_slash(
+    interaction: discord.Interaction,
+    seconds: app_commands.Range[int, 0, 86400],
+) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    set_guild_cooldown(interaction.guild.id, int(seconds))
+    await send_discord_audit(
+        interaction.guild,
+        "⚙️ Cooldown Updated",
+        [
+            {"name": "Server", "value": interaction.guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{interaction.user} ({interaction.user.id})", "inline": False},
+            {"name": "Cooldown", "value": "Disabled" if seconds == 0 else f"{seconds} seconds", "inline": True},
+        ],
+    )
+    await interaction.response.send_message(
+        "✅ **Server cooldown updated:** "
+        + ("Disabled" if seconds == 0 else f"{seconds} seconds"),
+        ephemeral=True,
+    )
+
+
+@bot.command(name="togglemaintenance")
+async def toggle_maintenance(ctx: commands.Context) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    _, dm_enabled = get_guild_settings(ctx.guild.id)
+    set_guild_dm_enabled(ctx.guild.id, not dm_enabled)
+    status = "Enabled" if not dm_enabled else "Disabled"
+    await send_discord_audit(
+        ctx.guild,
+        "⏸️ DM Maintenance Mode",
+        [
+            {"name": "Server", "value": ctx.guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{ctx.author} ({ctx.author.id})", "inline": False},
+            {"name": "Status", "value": status, "inline": True},
+        ],
+    )
+    await ctx.send(f"✅ **DM commands {status.lower()}** in this server.")
+
+
+@bot.tree.command(name="togglemaintenance", description="Enable or disable DM commands in this server.")
+async def toggle_maintenance_slash(interaction: discord.Interaction) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    _, dm_enabled = get_guild_settings(interaction.guild.id)
+    set_guild_dm_enabled(interaction.guild.id, not dm_enabled)
+    status = "Enabled" if not dm_enabled else "Disabled"
+    await send_discord_audit(
+        interaction.guild,
+        "⏸️ DM Maintenance Mode",
+        [
+            {"name": "Server", "value": interaction.guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{interaction.user} ({interaction.user.id})", "inline": False},
+            {"name": "Status", "value": status, "inline": True},
+        ],
+    )
+    await interaction.response.send_message(
+        f"✅ **DM commands {'enabled' if not dm_enabled else 'disabled'}** in this server.",
+        ephemeral=True,
+    )
+
+
+@bot.command(name="enableaudit")
+async def enable_audit(ctx: commands.Context) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    audit_enabled, audit_channel_id = get_audit_settings(ctx.guild.id)
+    channel = ctx.guild.get_channel(audit_channel_id) if audit_channel_id is not None else None
+    if not isinstance(channel, discord.TextChannel):
+        channel = await find_or_create_audit_channel(ctx.guild, "nino-audit-log")
+    if channel is None:
+        await ctx.send("❌ I could not create or find the audit log channel.")
+        return
+    set_audit_channel(ctx.guild.id, channel.id, True)
+    await send_discord_audit(
+        ctx.guild,
+        "📝 Guild Audit Logging Enabled",
+        [
+            {"name": "Server", "value": ctx.guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{ctx.author} ({ctx.author.id})", "inline": False},
+            {"name": "Audit Channel", "value": channel.mention, "inline": False},
+        ],
+    )
+    await ctx.send(f"✅ **Guild audit logging enabled:** {channel.mention}")
+
+
+@bot.tree.command(name="enableaudit", description="Create and enable an audit log channel for this server.")
+async def enable_audit_slash(interaction: discord.Interaction) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.defer(ephemeral=True)
+    _, audit_channel_id = get_audit_settings(interaction.guild.id)
+    channel = interaction.guild.get_channel(audit_channel_id) if audit_channel_id is not None else None
+    if not isinstance(channel, discord.TextChannel):
+        channel = await find_or_create_audit_channel(interaction.guild, "nino-audit-log")
+    if channel is None:
+        await interaction.followup.send("❌ I could not create or find the audit log channel.", ephemeral=True)
+        return
+    set_audit_channel(interaction.guild.id, channel.id, True)
+    await send_discord_audit(
+        interaction.guild,
+        "📝 Guild Audit Logging Enabled",
+        [
+            {"name": "Server", "value": interaction.guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{interaction.user} ({interaction.user.id})", "inline": False},
+            {"name": "Audit Channel", "value": channel.mention, "inline": False},
+        ],
+    )
+    await interaction.followup.send(
+        f"✅ **Guild audit logging enabled:** {channel.mention}",
+        ephemeral=True,
+    )
+
+
+@bot.command(name="disableaudit")
+async def disable_audit(ctx: commands.Context) -> None:
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    _, audit_channel_id = get_audit_settings(ctx.guild.id)
+    set_audit_channel(ctx.guild.id, audit_channel_id or 0, False)
+    await send_discord_audit(
+        ctx.guild,
+        "📝 Guild Audit Logging Disabled",
+        [
+            {"name": "Server", "value": ctx.guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{ctx.author} ({ctx.author.id})", "inline": False},
+        ],
+    )
+    await ctx.send("✅ **Guild audit logging disabled.**")
+
+
+@bot.tree.command(name="disableaudit", description="Disable audit logging for this server.")
+async def disable_audit_slash(interaction: discord.Interaction) -> None:
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    _, audit_channel_id = get_audit_settings(interaction.guild.id)
+    set_audit_channel(interaction.guild.id, audit_channel_id or 0, False)
+    await send_discord_audit(
+        interaction.guild,
+        "📝 Guild Audit Logging Disabled",
+        [
+            {"name": "Server", "value": interaction.guild.name, "inline": True},
+            {"name": "Moderator", "value": f"{interaction.user} ({interaction.user.id})", "inline": False},
+        ],
+    )
+    await interaction.response.send_message(
+        "✅ **Guild audit logging disabled.**",
+        ephemeral=True,
+    )
+
+
 HELP_CATEGORIES = {
     "All": "",
     "DM": (
@@ -631,7 +1176,17 @@ HELP_CATEGORIES = {
     ),
     "Utility": (
         "`/help` • `!help`\n"
-        "Show this menu."
+        "Show this menu.\n\n"
+        "`/settings` • `!settings`\n"
+        "Show server settings.\n\n"
+        "`/setcooldown <seconds>` • `!setcooldown <seconds>`\n"
+        "Set the guild cooldown.\n\n"
+        "`/togglemaintenance` • `!togglemaintenance`\n"
+        "Enable or disable DM commands.\n\n"
+        "`/enableaudit` • `!enableaudit`\n"
+        "Create and enable the guild audit log.\n\n"
+        "`/disableaudit` • `!disableaudit`\n"
+        "Disable guild audit logging."
     ),
 }
 
@@ -681,6 +1236,31 @@ def build_help_embed(category: str = "All") -> discord.Embed:
         embed.add_field(
             name="`/help` or `!help`",
             value="Show this command guide.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/settings` or `!settings`",
+            value="Show server settings. Admin-only.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/setcooldown` or `!setcooldown`",
+            value="Set the guild DM cooldown. Admin-only.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/togglemaintenance` or `!togglemaintenance`",
+            value="Enable or disable DM commands. Admin-only.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/enableaudit` or `!enableaudit`",
+            value="Create and enable the guild audit channel. Admin-only.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/disableaudit` or `!disableaudit`",
+            value="Disable guild audit logging. Admin-only.",
             inline=False,
         )
         embed.set_footer(text="Nino DM Relay Bot")
