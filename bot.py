@@ -914,6 +914,63 @@ async def settings_slash(interaction: discord.Interaction) -> None:
     )
 
 
+def build_server_list_embed() -> discord.Embed:
+    guilds = sorted(bot.guilds, key=lambda guild: guild.name.casefold())
+    embed = discord.Embed(
+        title="🌐 Nino Server List",
+        description=f"Nino is currently in **{len(guilds)}** server(s).",
+        color=discord.Color.blurple(),
+    )
+
+    if not guilds:
+        embed.add_field(name="Servers", value="No servers found.", inline=False)
+    else:
+        lines = [
+            f"• **{guild.name}**\n  ID: `{guild.id}` • Members: `{guild.member_count or 0}`"
+            for guild in guilds
+        ]
+        chunks: list[str] = []
+        current = ""
+        for line in lines:
+            if current and len(current) + len(line) + 1 > 1000:
+                chunks.append(current)
+                current = ""
+            current += f"{line}\n"
+        if current:
+            chunks.append(current)
+        for start, chunk in enumerate(chunks):
+            embed.add_field(
+                name="Servers" if start == 0 else "Servers (continued)",
+                value=chunk,
+                inline=False,
+            )
+
+    embed.set_footer(text="Owner-only command")
+    return embed
+
+
+@bot.command(name="serverlist")
+async def server_list(ctx: commands.Context) -> None:
+    if not is_owner(ctx.author):
+        await ctx.send("❌ Only the bot owner can use this command.")
+        return
+    await ctx.send(embed=build_server_list_embed())
+
+
+@bot.tree.command(name="serverlist", description="Show all servers Nino is in.")
+async def server_list_slash(interaction: discord.Interaction) -> None:
+    if not is_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ Only the bot owner can use this command.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message(
+        embed=build_server_list_embed(),
+        ephemeral=True,
+    )
+
+
 @bot.command(name="setcooldown")
 async def set_cooldown(ctx: commands.Context, value: str | None = None) -> None:
     if not is_admin_or_owner(ctx.author):
@@ -1186,7 +1243,9 @@ HELP_CATEGORIES = {
         "`/enableaudit` • `!enableaudit`\n"
         "Create and enable the guild audit log.\n\n"
         "`/disableaudit` • `!disableaudit`\n"
-        "Disable guild audit logging."
+        "Disable guild audit logging.\n\n"
+        "`/serverlist` • `!serverlist`\n"
+        "Show all servers Nino is in. Owner-only."
     ),
 }
 
@@ -1261,6 +1320,11 @@ def build_help_embed(category: str = "All") -> discord.Embed:
         embed.add_field(
             name="`/disableaudit` or `!disableaudit`",
             value="Disable guild audit logging. Admin-only.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/serverlist` or `!serverlist`",
+            value="Show all servers Nino is in. Owner-only.",
             inline=False,
         )
         embed.set_footer(text="Nino DM Relay Bot")
