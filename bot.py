@@ -71,7 +71,11 @@ intents.message_content = True
 intents.members = True
 intents.presences = True
 
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+bot = commands.Bot(
+    command_prefix=commands.when_mentioned_or("!"),
+    intents=intents,
+    help_command=None,
+)
 synced_commands = False
 
 

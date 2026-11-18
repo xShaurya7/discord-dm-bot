@@ -18,6 +18,10 @@ Built using **Python** and **discord.py**, and designed for **cloud deployment**
 
 `!dm @user message`
 
+You can also mention the bot as a prefix:
+
+`@Nino dm @user message`
+
 or use the `/dm` slash command.
 
 - 🧹 Automatically deletes the command message
