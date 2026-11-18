@@ -43,3 +43,12 @@ Instead of users directly DMing each other, the bot acts as a **relay**.
 - `GUILD_ID` (optional): Server ID for immediate slash-command registration. If omitted,
   commands are synced globally and may take longer to appear.
 
+For local or panel hosting, variables may be stored in a private `.env` file:
+
+```env
+BOT_TOKEN=your-bot-token
+OWNER_ID=your-discord-user-id
+GUILD_ID=your-discord-server-id
+AUDIT_WEBHOOK_URL=your-webhook-url
+```
+
