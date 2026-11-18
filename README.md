@@ -16,7 +16,9 @@ Built using **Python** and **discord.py**, and designed for **cloud deployment**
 
 - 📬 Send anonymous DMs via bot
 
-!dm @user {message}
+`!dm @user message`
+
+or use the `/dm` slash command.
 
 - 🧹 Automatically deletes the command message
 - 🔐 Owner / Admin-only access
@@ -25,10 +27,19 @@ Built using **Python** and **discord.py**, and designed for **cloud deployment**
 - 👤 Logs **Discord username + server nickname**
 - ☁️ Cloud-ready (Railway / Render / Fly.io)
 - 🔒 Secure token handling using environment variables
+- ⚡ Slash commands: `/dm`, `/useban`, and `/useunban`
 
 ---
 
 ## 🧠 How It Works
 
-Instead of users directly DMing each other, the bot acts as a **relay**:
+Instead of users directly DMing each other, the bot acts as a **relay**.
+
+## ⚙️ Environment variables
+
+- `BOT_TOKEN` (required): Discord bot token.
+- `OWNER_ID` (optional): Discord user ID that bypasses admin checks and cooldowns.
+- `AUDIT_WEBHOOK_URL` (optional): Webhook URL for DM audit logs.
+- `GUILD_ID` (optional): Server ID for immediate slash-command registration. If omitted,
+  commands are synced globally and may take longer to appear.
 
