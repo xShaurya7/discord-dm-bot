@@ -1387,8 +1387,9 @@ async def embed_message_slash(
     color: str | None = None,
     preset: app_commands.Choice[str] | None = None,
 ) -> None:
+    await interaction.response.defer(ephemeral=True)
     if interaction.guild is None:
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ This command can only be used in a server.",
             ephemeral=True,
         )
@@ -1405,7 +1406,7 @@ async def embed_message_slash(
         color,
         preset=preset.value if preset else "custom",
     )
-    await interaction.response.send_message(response, ephemeral=True)
+    await interaction.followup.send(response, ephemeral=True)
 
 
 async def send_channel_message(
