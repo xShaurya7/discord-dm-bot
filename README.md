@@ -114,8 +114,9 @@ Custom embed fields:
 
 Omit optional fields with empty pipe values. If no image or thumbnail is supplied,
 the bot uses the server icon automatically. Static image URLs are placed in the
-thumbnail or image area, while direct GIF URLs are rendered as animated embed
-images.
+thumbnail or image area. GIF URLs—including direct Tenor media URLs—are promoted
+to the animated embed image area because Discord does not reliably animate embed
+thumbnails. Use a direct `.gif` or CDN media URL rather than a GIF page.
 
 ## ⚙️ Environment variables
 

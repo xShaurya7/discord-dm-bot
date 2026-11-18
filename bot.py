@@ -1170,8 +1170,19 @@ def is_gif_url(value: str | None) -> bool:
     url = normalize_embed_url(value)
     if not url:
         return False
-    lowered = url.lower().split("?", 1)[0]
-    return lowered.endswith(".gif") or "giphy.com/media/" in lowered
+    lowered = url.lower()
+    path = lowered.split("?", 1)[0]
+    return (
+        path.endswith(".gif")
+        or path.endswith(".gif/")
+        or path.endswith(".gifv")
+        or "giphy.com/media/" in lowered
+        or "giphy.com/gifs/" in lowered
+        or "media.tenor.com/" in lowered
+        or "tenor.com/view/" in lowered
+        or "tenor.com/view/" in lowered
+        or "fm=gif" in lowered
+    )
 
 
 def build_features_embed(guild: discord.Guild) -> discord.Embed:
@@ -1249,8 +1260,15 @@ async def send_configured_embed(
 
     image_url = normalize_embed_url(image_url)
     thumbnail_url = normalize_embed_url(thumbnail_url)
-    if is_gif_url(thumbnail_url):
-        image_url = image_url or thumbnail_url
+    gif_url = (
+        thumbnail_url
+        if is_gif_url(thumbnail_url)
+        else image_url
+        if is_gif_url(image_url)
+        else None
+    )
+    if gif_url:
+        image_url = gif_url
         thumbnail_url = None
 
     try:
