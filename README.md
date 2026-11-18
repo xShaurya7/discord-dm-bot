@@ -46,6 +46,43 @@ or use the `/dm` slash command.
 
 Instead of users directly DMing each other, the bot acts as a **relay**.
 
+When `/dm` or `!dm` successfully sends a message:
+
+- Nino opens a persistent DM conversation with the target user.
+- The sender receives a delivery report containing the target, conversation ID, and timestamp.
+- If delivery is blocked or fails, the report records **Blocked** or **Failed**.
+- Delivery events are also sent to the configured audit webhook.
+
+## 💬 Conversation Replies
+
+The target user can reply directly in the bot DM to send a message back to the original sender.
+
+The original sender can reply in one of two ways:
+
+- Reply directly in the bot DM when there is one active conversation.
+- Use `/reply @user message` or `!reply @user message` when multiple conversations are active.
+
+All replies are anonymous and continue within the DM relay. Reply activity is logged as **Replied** in delivery reports and audit logs.
+
+## 📊 Delivery Reports
+
+Administrators can view recent delivery reports with:
+
+- `/dmhistory [limit]`
+- `!dmhistory [limit]`
+
+The limit accepts 1–25 reports. Reports show **Delivered**, **Blocked**, **Failed**, and **Replied** statuses, the sender and target, a message preview, and a relative timestamp.
+
+## ⌨️ DM Commands
+
+| Command | Description |
+| --- | --- |
+| `/dm @user message` or `!dm @user message` | Send an anonymous DM |
+| `/reply @user message` or `!reply @user message` | Reply to an active DM conversation |
+| `/dmhistory [limit]` or `!dmhistory [limit]` | View recent delivery reports (admin-only) |
+| `/enableaudit` or `!enableaudit` | Create and enable audit logging |
+| `/disableaudit` or `!disableaudit` | Disable audit logging |
+
 ## ⚙️ Environment variables
 
 - `BOT_TOKEN` (required): Discord bot token.
