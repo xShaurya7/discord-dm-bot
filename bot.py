@@ -1204,7 +1204,6 @@ def build_features_embed(guild: discord.Guild) -> discord.Embed:
         value="**Example:** `/info @Member`",
         inline=False,
     )
-    embed.set_image(url=guild.icon.url if guild.icon else None)
     embed.set_footer(
         text=f"{guild.name} • Powered by Nino",
         icon_url=guild.icon.url if guild.icon else None,
@@ -1257,9 +1256,8 @@ async def send_configured_embed(
             embed.set_thumbnail(
                 url=thumbnail_url or (guild.icon.url if guild.icon else None)
             )
-            embed.set_image(
-                url=image_url or (guild.icon.url if guild.icon else None)
-            )
+            if image_url:
+                embed.set_image(url=image_url)
             embed.set_footer(
                 text=footer[:2048] if footer else f"{guild.name} • Posted by Nino",
                 icon_url=guild.icon.url if guild.icon else None,
