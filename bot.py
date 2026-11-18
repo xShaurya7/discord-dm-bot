@@ -582,13 +582,20 @@ async def dm(
         await ctx.send("❌ This command can only be used in a server.")
         return
 
+    try:
+        await ctx.message.delete()
+    except discord.NotFound:
+        pass
+    except discord.Forbidden:
+        await ctx.send(
+            "⚠️ I need `Manage Messages` permission to delete the `!dm` command.",
+            delete_after=10,
+        )
+    except discord.HTTPException as error:
+        print(f"Could not delete DM command message: {error}")
+
     sent, response = await relay_dm(ctx.author, ctx.guild, ctx.channel.name, member, message)
-    if sent:
-        try:
-            await ctx.message.delete()
-        except discord.HTTPException:
-            pass
-    else:
+    if not sent:
         await ctx.send(response)
 
 
