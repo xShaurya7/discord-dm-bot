@@ -15,7 +15,6 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_ID_ENV = os.getenv("OWNER_ID")
-AUDIT_WEBHOOK_URL = os.getenv("AUDIT_WEBHOOK_URL")
 GUILD_ID_ENV = os.getenv("GUILD_ID")
 
 if not BOT_TOKEN:
@@ -301,31 +300,6 @@ def remaining_cooldown(guild_id: int, user_id: int) -> int:
     return max(1, int(cooldown_seconds - (time.time() - cooldowns[key])))
 
 
-def send_audit_log(server: str, channel: str, sender: str, target: str, message: str) -> None:
-    if not AUDIT_WEBHOOK_URL:
-        return
-
-    payload = {
-        "embeds": [{
-            "title": "📩 DM Relay Used",
-            "color": 3447003,
-            "fields": [
-                {"name": "Server", "value": server[:1024], "inline": True},
-                {"name": "Channel", "value": channel[:1024], "inline": True},
-                {"name": "Sender", "value": sender[:1024], "inline": False},
-                {"name": "Target User", "value": target[:1024], "inline": False},
-                {"name": "Message", "value": message[:1024], "inline": False},
-            ],
-        }],
-    }
-
-    try:
-        response = requests.post(AUDIT_WEBHOOK_URL, json=payload, timeout=5)
-        response.raise_for_status()
-    except requests.RequestException as error:
-        print(f"Audit log failed: {error}")
-
-
 async def find_or_create_audit_channel(
     guild: discord.Guild,
     channel_name: str,
@@ -497,13 +471,6 @@ async def send_discord_audit(
                     except (discord.HTTPException, discord.NotFound) as error:
                         print(f"Could not send main-server audit webhook: {error}")
 
-    if AUDIT_WEBHOOK_URL:
-        await asyncio.to_thread(
-            send_audit_webhook,
-            AUDIT_WEBHOOK_URL,
-            embed,
-        )
-
 
 async def ensure_audit_webhook(
     guild: discord.Guild,
@@ -532,18 +499,6 @@ async def ensure_audit_webhook(
         return None
 
 
-def send_audit_webhook(webhook_url: str, embed: discord.Embed) -> None:
-    if not webhook_url:
-        return
-    try:
-        response = requests.post(
-            webhook_url,
-            json={"embeds": [embed.to_dict()]},
-            timeout=5,
-        )
-        response.raise_for_status()
-    except requests.RequestException as error:
-        print(f"Audit webhook failed: {error}")
 
 
 async def relay_dm(
