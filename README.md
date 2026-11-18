@@ -48,9 +48,13 @@ Instead of users directly DMing each other, the bot acts as a **relay**.
 
 - `BOT_TOKEN` (required): Discord bot token.
 - `OWNER_ID` (optional): Discord user ID that bypasses admin checks and cooldowns.
-- `AUDIT_WEBHOOK_URL` (optional): Webhook URL for DM audit logs.
 - `GUILD_ID` (optional): Main server ID used for mirrored audit logs.
 - `DATABASE_PATH` (optional): SQLite database location for allowed roles.
+
+Audit webhooks are created automatically by `enableaudit` in each server's
+private audit channel. The bot needs **Manage Channels** and **Manage Webhooks**
+in the relevant server. `GUILD_ID` is also used for the central
+`nino-main-audit-log` channel.
 
 For local or panel hosting, variables may be stored in a private `.env` file:
 
@@ -58,6 +62,5 @@ For local or panel hosting, variables may be stored in a private `.env` file:
 BOT_TOKEN=your-bot-token
 OWNER_ID=your-discord-user-id
 GUILD_ID=your-discord-server-id
-AUDIT_WEBHOOK_URL=your-webhook-url
 ```
 

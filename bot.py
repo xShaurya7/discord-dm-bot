@@ -433,13 +433,24 @@ async def send_discord_audit(
 
             if webhook_url:
                 try:
-                    webhook = discord.Webhook.from_url(webhook_url, client=bot)
-                    await webhook.send(
-                        embed=embed,
-                        username="Nino Audit",
-                        wait=True,
-                    )
-                except (discord.HTTPException, discord.NotFound) as error:
+                    await send_webhook_embed(webhook_url, embed, "Nino Audit")
+                except discord.NotFound:
+                    set_audit_webhook_url(source_guild.id, "")
+                    try:
+                        replacement_url = await ensure_audit_webhook(
+                            source_guild,
+                            channel,
+                        )
+                        if replacement_url:
+                            set_audit_webhook_url(source_guild.id, replacement_url)
+                            await send_webhook_embed(
+                                replacement_url,
+                                embed,
+                                "Nino Audit",
+                            )
+                    except discord.HTTPException as error:
+                        print(f"Could not recreate guild audit webhook: {error}")
+                except discord.HTTPException as error:
                     print(f"Could not send guild audit webhook: {error}")
             else:
                 print("Could not create guild audit webhook")
@@ -459,14 +470,10 @@ async def send_discord_audit(
                 )
                 if main_webhook_url:
                     try:
-                        webhook = discord.Webhook.from_url(
+                        await send_webhook_embed(
                             main_webhook_url,
-                            client=bot,
-                        )
-                        await webhook.send(
-                            embed=embed,
-                            username="Nino Main Audit",
-                            wait=True,
+                            embed,
+                            "Nino Main Audit",
                         )
                     except (discord.HTTPException, discord.NotFound) as error:
                         print(f"Could not send main-server audit webhook: {error}")
@@ -479,6 +486,12 @@ async def ensure_audit_webhook(
 ) -> str | None:
     try:
         webhooks = await channel.webhooks()
+    except discord.Forbidden:
+        print(
+            f"Missing Manage Webhooks permission in {guild.name} "
+            f"for #{channel.name}"
+        )
+        return None
     except discord.HTTPException as error:
         print(f"Could not read audit webhooks in {guild.name}: {error}")
         return None
@@ -495,8 +508,20 @@ async def ensure_audit_webhook(
         )
         return webhook.url
     except discord.HTTPException as error:
-        print(f"Could not create audit webhook in {guild.name}: {error}")
+        print(
+            f"Could not create audit webhook in {guild.name}: {error}. "
+            "The bot needs Manage Webhooks in the audit channel."
+        )
         return None
+
+
+async def send_webhook_embed(
+    webhook_url: str,
+    embed: discord.Embed,
+    username: str,
+) -> None:
+    webhook = discord.Webhook.from_url(webhook_url, client=bot)
+    await webhook.send(embed=embed, username=username, wait=True)
 
 
 
