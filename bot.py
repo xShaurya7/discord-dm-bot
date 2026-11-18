@@ -251,4 +251,47 @@ async def unban_slash(interaction: discord.Interaction, member: discord.Member) 
     )
 
 
+def build_help_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="📖 Nino Bot Commands",
+        description="Use these commands to manage and use the DM relay.",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="`/dm` or `!dm`",
+        value="Send an anonymous DM to a server member.",
+        inline=False,
+    )
+    embed.add_field(
+        name="`/ban` or `!ban`",
+        value="Ban a member from using the bot.",
+        inline=False,
+    )
+    embed.add_field(
+        name="`/unban` or `!unban`",
+        value="Unban a member and allow them to use the bot again.",
+        inline=False,
+    )
+    embed.add_field(
+        name="`/help` or `!help`",
+        value="Show this command guide.",
+        inline=False,
+    )
+    embed.set_footer(text="Nino DM Relay Bot")
+    return embed
+
+
+@bot.command(name="help")
+async def help_command(ctx: commands.Context) -> None:
+    await ctx.send(embed=build_help_embed())
+
+
+@bot.tree.command(name="help", description="Show all available bot commands.")
+async def help_slash(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message(
+        embed=build_help_embed(),
+        ephemeral=True,
+    )
+
+
 bot.run(BOT_TOKEN)
