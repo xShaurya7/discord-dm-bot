@@ -1476,6 +1476,8 @@ HELP_CATEGORIES = {
         "Show this menu.\n\n"
         "`/info [member]` • `!info [@member]`\n"
         "Show member profile details.\n\n"
+        "`/prefixlist` • `!prefixlist`\n"
+        "Show the bot's command prefixes.\n\n"
         "`/settings` • `!settings`\n"
         "Show server settings.\n\n"
         "`/setcooldown <seconds>` • `!setcooldown <seconds>`\n"
@@ -1545,6 +1547,11 @@ def build_help_embed(category: str = "All") -> discord.Embed:
             inline=False,
         )
         embed.add_field(
+            name="`/prefixlist` or `!prefixlist`",
+            value="Show all available command prefixes.",
+            inline=False,
+        )
+        embed.add_field(
             name="`/settings` or `!settings`",
             value="Show server settings. Admin-only.",
             inline=False,
@@ -1581,6 +1588,48 @@ def build_help_embed(category: str = "All") -> discord.Embed:
         title=f"📖 Nino • {category}",
         description=HELP_CATEGORIES[category],
         color=discord.Color.blurple(),
+    )
+
+
+def build_prefix_list_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="⌨️ Nino Command Prefixes",
+        description="Choose any of these ways to run Nino commands.",
+        color=discord.Color.blurple(),
+    )
+    embed.add_field(
+        name="Slash",
+        value="`/command`\nExample: `/help`",
+        inline=False,
+    )
+    embed.add_field(
+        name="Prefix",
+        value="`!command`\nExample: `!help`",
+        inline=False,
+    )
+    if bot.user is not None:
+        mention_prefix = bot.user.mention
+    else:
+        mention_prefix = "@Nino"
+    embed.add_field(
+        name="Mention",
+        value=f"`{mention_prefix} command`\nExample: `{mention_prefix} help`",
+        inline=False,
+    )
+    embed.set_footer(text="All prefixes run the same commands")
+    return embed
+
+
+@bot.command(name="prefixlist")
+async def prefix_list(ctx: commands.Context) -> None:
+    await ctx.send(embed=build_prefix_list_embed())
+
+
+@bot.tree.command(name="prefixlist", description="Show all available command prefixes.")
+async def prefix_list_slash(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message(
+        embed=build_prefix_list_embed(),
+        ephemeral=True,
     )
 
 
