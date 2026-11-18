@@ -809,6 +809,13 @@ async def on_ready() -> None:
         ),
     )
     if not synced_commands:
+        for guild in bot.guilds:
+            try:
+                bot.tree.clear_commands(guild=guild)
+                await bot.tree.sync(guild=guild)
+                print(f"🧹 Cleared stale guild commands in {guild.name}")
+            except discord.HTTPException as error:
+                print(f"Could not clear guild commands in {guild.name}: {error}")
         await bot.tree.sync()
         print("✅ Slash commands synced globally")
         synced_commands = True
