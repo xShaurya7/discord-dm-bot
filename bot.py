@@ -28,6 +28,7 @@ cooldowns: dict[tuple[int, int], float] = {}
 DATABASE_PATH = os.getenv("DATABASE_PATH", "nino.db")
 
 database = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+database.row_factory = sqlite3.Row
 database.execute("""
     CREATE TABLE IF NOT EXISTS allowed_dm_roles (
         guild_id INTEGER NOT NULL,
@@ -67,7 +68,114 @@ if "audit_webhook_url" not in columns:
     database.execute(
         "ALTER TABLE guild_settings ADD COLUMN audit_webhook_url TEXT"
     )
+database.execute("""
+    CREATE TABLE IF NOT EXISTS dm_deliveries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id INTEGER NOT NULL,
+        sender_id INTEGER NOT NULL,
+        target_id INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        message TEXT NOT NULL,
+        error TEXT,
+        delivered_at REAL NOT NULL
+    )
+""")
+database.execute("""
+    CREATE TABLE IF NOT EXISTS dm_conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id INTEGER NOT NULL,
+        sender_id INTEGER NOT NULL,
+        target_id INTEGER NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    )
+""")
 database.commit()
+
+def record_dm_delivery(
+    guild_id: int,
+    sender_id: int,
+    target_id: int,
+    status: str,
+    message: str,
+    error: str | None = None,
+) -> int:
+    with database:
+        cursor = database.execute(
+            """
+            INSERT INTO dm_deliveries
+                (guild_id, sender_id, target_id, status, message, error, delivered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (guild_id, sender_id, target_id, status, message, error, time.time()),
+        )
+    return int(cursor.lastrowid)
+
+
+def open_dm_conversation(guild_id: int, sender_id: int, target_id: int) -> int:
+    now = time.time()
+    with database:
+        database.execute(
+            "UPDATE dm_conversations SET active = 0 WHERE target_id = ? AND sender_id != ?",
+            (target_id, sender_id),
+        )
+        cursor = database.execute(
+            """
+            INSERT INTO dm_conversations
+                (guild_id, sender_id, target_id, active, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+            """,
+            (guild_id, sender_id, target_id, now, now),
+        )
+    return int(cursor.lastrowid)
+
+
+def get_target_conversation(target_id: int) -> sqlite3.Row | None:
+    cursor = database.execute(
+        """
+        SELECT * FROM dm_conversations
+        WHERE target_id = ? AND active = 1
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (target_id,),
+    )
+    return cursor.fetchone()
+
+
+def get_sender_conversations(sender_id: int) -> list[sqlite3.Row]:
+    cursor = database.execute(
+        """
+        SELECT * FROM dm_conversations
+        WHERE sender_id = ? AND active = 1
+        ORDER BY updated_at DESC, id DESC
+        """,
+        (sender_id,),
+    )
+    return cursor.fetchall()
+
+
+def find_sender_conversation(sender_id: int, target_id: int) -> sqlite3.Row | None:
+    cursor = database.execute(
+        """
+        SELECT * FROM dm_conversations
+        WHERE sender_id = ? AND target_id = ? AND active = 1
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (sender_id, target_id),
+    )
+    return cursor.fetchone()
+
+
+def touch_dm_conversation(conversation_id: int) -> None:
+    with database:
+        database.execute(
+            "UPDATE dm_conversations SET updated_at = ? WHERE id = ?",
+            (time.time(), conversation_id),
+        )
+
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -551,11 +659,73 @@ async def relay_dm(
         cooldowns[(guild.id, author.id)] = time.time()
 
     try:
-        await member.send(message)
+        reply_embed = discord.Embed(
+            title="📩 New DM from Nino",
+            description=message,
+            color=discord.Color.blurple(),
+        )
+        reply_embed.add_field(
+            name="Server",
+            value=guild.name,
+            inline=True,
+        )
+        reply_embed.set_footer(text="Reply here to send a message back to the original sender")
+        sent_message = await member.send(embed=reply_embed)
+        conversation_id = open_dm_conversation(guild.id, author.id, member.id)
+        record_dm_delivery(
+            guild.id,
+            author.id,
+            member.id,
+            "Delivered",
+            message,
+        )
+        delivery_report = (
+            f"✅ **Delivered** to {member.mention}\n"
+            f"Conversation: `#{conversation_id}` • "
+            f"<t:{int(sent_message.created_at.timestamp())}:F>"
+        )
     except discord.Forbidden:
-        return False, "❌ User has DMs disabled."
-    except discord.HTTPException:
-        return False, "❌ Failed to send DM."
+        record_dm_delivery(
+            guild.id,
+            author.id,
+            member.id,
+            "Blocked",
+            message,
+            "User has DMs disabled or blocked the bot",
+        )
+        await send_discord_audit(
+            guild,
+            "📩 DM Delivery Blocked",
+            [
+                {"name": "Server", "value": guild.name, "inline": True},
+                {"name": "Sender", "value": f"{author} ({author.id})", "inline": False},
+                {"name": "Target User", "value": f"{member} ({member.id})", "inline": False},
+                {"name": "Message", "value": message, "inline": False},
+                {"name": "Delivery", "value": "🚫 Blocked", "inline": True},
+            ],
+        )
+        return False, "❌ User has DMs disabled or blocked the bot."
+    except discord.HTTPException as error:
+        record_dm_delivery(
+            guild.id,
+            author.id,
+            member.id,
+            "Failed",
+            message,
+            str(error),
+        )
+        await send_discord_audit(
+            guild,
+            "📩 DM Delivery Failed",
+            [
+                {"name": "Server", "value": guild.name, "inline": True},
+                {"name": "Sender", "value": f"{author} ({author.id})", "inline": False},
+                {"name": "Target User", "value": f"{member} ({member.id})", "inline": False},
+                {"name": "Message", "value": message, "inline": False},
+                {"name": "Delivery", "value": f"❌ Failed: {error}", "inline": False},
+            ],
+        )
+        return False, f"❌ Failed to send DM: {error}"
 
     await send_discord_audit(
         guild,
@@ -566,9 +736,11 @@ async def relay_dm(
             {"name": "Sender", "value": f"{author} ({author.id})", "inline": False},
             {"name": "Target User", "value": f"{member} ({member.id})", "inline": False},
             {"name": "Message", "value": message, "inline": False},
+            {"name": "Delivery", "value": "✅ Delivered", "inline": True},
+            {"name": "Conversation", "value": f"#{conversation_id}", "inline": True},
         ],
     )
-    return True, "✅ DM sent successfully."
+    return True, delivery_report
 
 
 async def ban_user(
@@ -643,6 +815,110 @@ async def on_ready() -> None:
     print(f"✅ Bot online as {bot.user}")
 
 
+@bot.event
+async def on_message(message: discord.Message) -> None:
+    await bot.process_commands(message)
+
+    if message.guild is not None or message.author.bot:
+        return
+    if bot.user is not None and message.author.id == bot.user.id:
+        return
+    if not message.content.strip():
+        return
+
+    target_conversation = get_target_conversation(message.author.id)
+    if target_conversation is not None:
+        sender = bot.get_user(int(target_conversation["sender_id"]))
+        guild = bot.get_guild(int(target_conversation["guild_id"]))
+        if sender is not None and guild is not None:
+            embed = discord.Embed(
+                title="💬 Reply received",
+                description=message.content,
+                color=discord.Color.green(),
+            )
+            embed.add_field(
+                name="From",
+                value=f"{message.author} ({message.author.id})",
+                inline=False,
+            )
+            embed.add_field(
+                name="Server",
+                value=guild.name,
+                inline=True,
+            )
+            try:
+                await sender.send(embed=embed)
+                touch_dm_conversation(int(target_conversation["id"]))
+                record_dm_delivery(
+                    guild.id,
+                    int(target_conversation["sender_id"]),
+                    message.author.id,
+                    "Replied",
+                    message.content,
+                )
+                await send_discord_audit(
+                    guild,
+                    "💬 DM Conversation Reply",
+                    [
+                        {"name": "Direction", "value": "Target → Sender", "inline": True},
+                        {"name": "Sender", "value": f"{message.author} ({message.author.id})", "inline": False},
+                        {"name": "Server", "value": guild.name, "inline": True},
+                        {"name": "Message", "value": message.content, "inline": False},
+                    ],
+                )
+                await message.reply("✅ Reply delivered to the original sender.")
+                return
+            except discord.HTTPException as error:
+                await message.reply(f"❌ Could not deliver your reply: {error}")
+                return
+
+    sender_conversations = get_sender_conversations(message.author.id)
+    if len(sender_conversations) == 1:
+        conversation = sender_conversations[0]
+        target = bot.get_user(int(conversation["target_id"]))
+        guild = bot.get_guild(int(conversation["guild_id"]))
+        if target is not None and guild is not None:
+            embed = discord.Embed(
+                title="💬 Reply from DM sender",
+                description=message.content,
+                color=discord.Color.gold(),
+            )
+            embed.add_field(
+                name="Server",
+                value=guild.name,
+                inline=True,
+            )
+            embed.set_footer(text="Reply here to continue the conversation")
+            try:
+                await target.send(embed=embed)
+                touch_dm_conversation(int(conversation["id"]))
+                record_dm_delivery(
+                    guild.id,
+                    message.author.id,
+                    target.id,
+                    "Replied",
+                    message.content,
+                )
+                await send_discord_audit(
+                    guild,
+                    "💬 DM Conversation Reply",
+                    [
+                        {"name": "Direction", "value": "Sender → Target", "inline": True},
+                        {"name": "Sender", "value": f"{message.author} ({message.author.id})", "inline": False},
+                        {"name": "Target", "value": f"{target} ({target.id})", "inline": False},
+                        {"name": "Message", "value": message.content, "inline": False},
+                    ],
+                )
+                await message.reply("✅ Reply delivered.")
+            except discord.HTTPException as error:
+                await message.reply(f"❌ Could not deliver your reply: {error}")
+    elif len(sender_conversations) > 1:
+        await message.reply(
+            "You have multiple active conversations. Use "
+            "`!reply @user message` or `/reply` to choose a recipient."
+        )
+
+
 @bot.command(name="dm")
 async def dm(
     ctx: commands.Context,
@@ -670,8 +946,7 @@ async def dm(
         print(f"Could not delete DM command message: {error}")
 
     sent, response = await relay_dm(ctx.author, ctx.guild, ctx.channel.name, member, message)
-    if not sent:
-        await ctx.send(response)
+    await ctx.send(response, delete_after=15)
 
 
 @bot.tree.command(name="dm", description="Send an anonymous direct message to a server member.")
@@ -703,6 +978,171 @@ async def dm_slash(
         message,
     )
     await interaction.followup.send(response, ephemeral=True)
+
+
+async def send_conversation_reply(
+    author: discord.abc.User,
+    guild: discord.Guild,
+    member: discord.User,
+    message: str,
+) -> tuple[bool, str]:
+    conversation = find_sender_conversation(author.id, member.id)
+    if conversation is None:
+        return False, "❌ No active DM conversation exists with that user."
+
+    try:
+        embed = discord.Embed(
+            title="💬 Reply from DM sender",
+            description=message,
+            color=discord.Color.gold(),
+        )
+        embed.add_field(name="Server", value=guild.name, inline=True)
+        embed.set_footer(text="Reply here to continue the conversation")
+        await member.send(embed=embed)
+        touch_dm_conversation(int(conversation["id"]))
+        record_dm_delivery(
+            guild.id,
+            author.id,
+            member.id,
+            "Replied",
+            message,
+        )
+        await send_discord_audit(
+            guild,
+            "💬 DM Conversation Reply",
+            [
+                {"name": "Direction", "value": "Sender → Target", "inline": True},
+                {"name": "Sender", "value": f"{author} ({author.id})", "inline": False},
+                {"name": "Target", "value": f"{member} ({member.id})", "inline": False},
+                {"name": "Message", "value": message, "inline": False},
+            ],
+        )
+        return True, f"✅ Reply delivered to {member.mention if isinstance(member, discord.Member) else member}."
+    except discord.Forbidden:
+        return False, "❌ The target user is no longer accepting DMs."
+    except discord.HTTPException as error:
+        return False, f"❌ Failed to deliver reply: {error}"
+
+
+@bot.command(name="reply")
+async def reply_dm(
+    ctx: commands.Context,
+    member: discord.Member | None = None,
+    *,
+    message: str | None = None,
+) -> None:
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    if member is None or not message:
+        await ctx.send("❌ Usage: `!reply @user message`")
+        return
+    sent, response = await send_conversation_reply(
+        ctx.author,
+        ctx.guild,
+        member,
+        message,
+    )
+    await ctx.send(response, delete_after=15)
+
+
+@bot.tree.command(name="reply", description="Reply to a user in an active DM conversation.")
+@app_commands.describe(member="The user who received the original DM", message="Your reply")
+async def reply_dm_slash(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    message: str,
+) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    sent, response = await send_conversation_reply(
+        interaction.user,
+        interaction.guild,
+        member,
+        message,
+    )
+    await interaction.response.send_message(response, ephemeral=True)
+
+
+def build_dm_history_embed(guild: discord.Guild, limit: int = 10) -> discord.Embed:
+    rows = database.execute(
+        """
+        SELECT * FROM dm_deliveries
+        WHERE guild_id = ?
+        ORDER BY delivered_at DESC, id DESC
+        LIMIT ?
+        """,
+        (guild.id, max(1, min(limit, 25))),
+    ).fetchall()
+    embed = discord.Embed(
+        title="📊 Recent DM Delivery Reports",
+        color=discord.Color.blurple(),
+    )
+    if not rows:
+        embed.description = "No DM delivery reports found."
+        return embed
+    lines = []
+    for row in rows:
+        sender = guild.get_member(int(row["sender_id"]))
+        target = guild.get_member(int(row["target_id"]))
+        sender_name = str(sender) if sender is not None else str(row["sender_id"])
+        target_name = str(target) if target is not None else str(row["target_id"])
+        status_icon = {
+            "Delivered": "✅",
+            "Blocked": "🚫",
+            "Failed": "❌",
+            "Replied": "💬",
+        }.get(str(row["status"]), "ℹ️")
+        preview = str(row["message"]).replace("\n", " ")
+        if len(preview) > 50:
+            preview = preview[:47] + "..."
+        lines.append(
+            f"{status_icon} **{row['status']}** • "
+            f"{sender_name} → {target_name}\n"
+            f"`{preview}` • <t:{int(row['delivered_at'])}:R>"
+        )
+    embed.description = "\n\n".join(lines)
+    embed.set_footer(text=guild.name)
+    return embed
+
+
+@bot.command(name="dmhistory")
+async def dm_history(ctx: commands.Context, limit: int = 10) -> None:
+    if ctx.guild is None:
+        await ctx.send("❌ This command can only be used in a server.")
+        return
+    if not is_admin_or_owner(ctx.author):
+        await ctx.send("❌ You are not allowed to use this command.")
+        return
+    await ctx.send(embed=build_dm_history_embed(ctx.guild, limit))
+
+
+@bot.tree.command(name="dmhistory", description="Show recent DM delivery and reply reports.")
+@app_commands.describe(limit="Number of reports to show, from 1 to 25")
+async def dm_history_slash(
+    interaction: discord.Interaction,
+    limit: app_commands.Range[int, 1, 25] = 10,
+) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ This command can only be used in a server.",
+            ephemeral=True,
+        )
+        return
+    if not is_admin_or_owner(interaction.user):
+        await interaction.response.send_message(
+            "❌ You are not allowed to use this command.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message(
+        embed=build_dm_history_embed(interaction.guild, int(limit)),
+        ephemeral=True,
+    )
 
 
 @bot.command(name="ban")
@@ -1546,7 +1986,11 @@ HELP_CATEGORIES = {
     "All": "",
     "DM": (
         "`/dm <user> <message>` • `!dm @user message`\n"
-        "Send an anonymous DM."
+        "Send an anonymous DM.\n\n"
+        "`/reply <user> <message>` • `!reply @user message`\n"
+        "Reply to an active DM conversation.\n\n"
+        "`/dmhistory [limit]` • `!dmhistory [limit]`\n"
+        "Show recent delivery reports. Admin-only."
     ),
     "Moderation": (
         "`/ban <user> [reason]` • `!ban @user [reason]`\n"
@@ -1596,7 +2040,17 @@ def build_help_embed(category: str = "All") -> discord.Embed:
         )
         embed.add_field(
             name="`/dm` or `!dm`",
-            value="Send an anonymous DM to a server member.",
+            value="Send an anonymous DM to a server member. Successful deliveries include a conversation report.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/reply` or `!reply`",
+            value="Reply to a user in an active DM conversation.",
+            inline=False,
+        )
+        embed.add_field(
+            name="`/dmhistory` or `!dmhistory`",
+            value="Show recent delivered, blocked, failed, and replied DM reports. Admin-only.",
             inline=False,
         )
         embed.add_field(

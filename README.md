@@ -37,6 +37,8 @@ or use the `/dm` slash command.
 - 🔑 Allow selected roles to use `/dm` or `!dm`
 - ⚙️ Per-server settings for cooldown, maintenance mode, and audit logging
 - 🪝 Audit logs delivered through private-server webhooks
+- 💬 Two-way DM conversation replies through bot DMs
+- 📊 `/dmhistory` and `!dmhistory` show delivered, blocked, failed, and reply reports
 
 ---
 
