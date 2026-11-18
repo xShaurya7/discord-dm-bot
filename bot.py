@@ -610,47 +610,46 @@ async def role_list_slash(interaction: discord.Interaction) -> None:
 def build_help_embed() -> discord.Embed:
     embed = discord.Embed(
         title="📖 Nino Bot Commands",
-        description="Use these commands to manage and use the DM relay.",
         color=discord.Color.blurple(),
     )
     embed.add_field(
-        name="`/dm` or `!dm`",
-        value="Send an anonymous DM to a server member.",
+        name="`/dm` • `!dm`",
+        value="Send an anonymous DM.",
         inline=False,
     )
     embed.add_field(
-        name="`/ban` or `!ban`",
-        value="Ban a member from using the bot.",
+        name="`/ban` • `!ban`",
+        value="Bot-ban a member.",
         inline=False,
     )
     embed.add_field(
-        name="`/unban` or `!unban`",
-        value="Unban a member and allow them to use the bot again.",
+        name="`/unban` • `!unban`",
+        value="Remove a bot ban.",
         inline=False,
     )
     embed.add_field(
-        name="`/banlist` or `!banlist`",
-        value="Show all bot DM bans, reasons, and relative ban times. Admin-only.",
+        name="`/banlist` • `!banlist`",
+        value="Show bot-banned users.",
         inline=False,
     )
     embed.add_field(
-        name="`/allowroledm` or `!allowroledm`",
-        value="Allow a role to use the DM command. Admin-only.",
+        name="`/allowroledm` • `!allowroledm`",
+        value="Allow a role to use DMs.",
         inline=False,
     )
     embed.add_field(
-        name="`/removeroledm` or `!removeroledm`",
-        value="Remove DM command access from a role. Admin-only.",
+        name="`/removeroledm` • `!removeroledm`",
+        value="Remove DM access from a role.",
         inline=False,
     )
     embed.add_field(
-        name="`/rolelist` or `!rolelist`",
-        value="Show all roles allowed to use DM commands. Admin-only.",
+        name="`/rolelist` • `!rolelist`",
+        value="Show allowed roles.",
         inline=False,
     )
     embed.add_field(
-        name="`/help` or `!help`",
-        value="Show this command guide.",
+        name="`/help` • `!help`",
+        value="Show this menu.",
         inline=False,
     )
     embed.set_footer(text="Nino DM Relay Bot")
