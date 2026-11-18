@@ -205,17 +205,17 @@ async def dm_slash(
     await interaction.followup.send(response, ephemeral=True)
 
 
-@bot.command(name="useban")
-async def useban(ctx: commands.Context, member: discord.Member | None = None) -> None:
+@bot.command(name="ban")
+async def ban(ctx: commands.Context, member: discord.Member | None = None) -> None:
     if member is None:
-        await ctx.send("❌ Usage: `!useban @user`")
+        await ctx.send("❌ Usage: `!ban @user`")
         return
     await ctx.send(await ban_user(ctx.author, member))
 
 
-@bot.tree.command(name="useban", description="Ban a member from using the bot.")
+@bot.tree.command(name="ban", description="Ban a member from using the bot.")
 @app_commands.describe(member="The member to ban from using the bot")
-async def useban_slash(interaction: discord.Interaction, member: discord.Member) -> None:
+async def ban_slash(interaction: discord.Interaction, member: discord.Member) -> None:
     if interaction.user.id in banned_users and not is_admin_or_owner(interaction.user):
         await interaction.response.send_message(
             "🚫 You are banned from using this bot.",
@@ -228,17 +228,17 @@ async def useban_slash(interaction: discord.Interaction, member: discord.Member)
     )
 
 
-@bot.command(name="useunban")
-async def useunban(ctx: commands.Context, member: discord.Member | None = None) -> None:
+@bot.command(name="unban")
+async def unban(ctx: commands.Context, member: discord.Member | None = None) -> None:
     if member is None:
-        await ctx.send("❌ Usage: `!useunban @user`")
+        await ctx.send("❌ Usage: `!unban @user`")
         return
     await ctx.send(await unban_user(ctx.author, member))
 
 
-@bot.tree.command(name="useunban", description="Allow a member to use the bot again.")
+@bot.tree.command(name="unban", description="Allow a member to use the bot again.")
 @app_commands.describe(member="The member to unban")
-async def useunban_slash(interaction: discord.Interaction, member: discord.Member) -> None:
+async def unban_slash(interaction: discord.Interaction, member: discord.Member) -> None:
     if interaction.user.id in banned_users and not is_admin_or_owner(interaction.user):
         await interaction.response.send_message(
             "🚫 You are banned from using this bot.",
